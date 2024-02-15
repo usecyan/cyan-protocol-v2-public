@@ -6,19 +6,21 @@ library Utils {
     /// @param to Target address.
     /// @param value Native token value to be sent to the address.
     /// @param data Data to be sent to the address.
-    /// @return Result of the transaciton.
+    /// @return result Result of the transaciton.
     function _execute(
         address to,
         uint256 value,
         bytes memory data
-    ) internal returns (bytes memory) {
+    ) internal returns (bytes memory result) {
         assembly {
             let success := call(gas(), to, value, add(data, 0x20), mload(data), 0, 0)
-            returndatacopy(0, 0, returndatasize())
+
+            mstore(result, returndatasize())
+            returndatacopy(add(result, 0x20), 0, returndatasize())
+
             if eq(success, 0) {
-                revert(0, returndatasize())
+                revert(add(result, 0x20), returndatasize())
             }
-            return(0, returndatasize())
         }
     }
 

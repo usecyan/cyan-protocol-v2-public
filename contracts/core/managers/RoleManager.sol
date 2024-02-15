@@ -5,9 +5,10 @@ pragma solidity 0.8.19;
 /// @author Bulgantamir Gankhuyag - <bulgaa@usecyan.com>
 /// @author Naranbayar Uuganbayar - <naba@usecyan.com>
 abstract contract RoleManagerStorage {
-    address[3] internal _operators;
+    address[3] internal _deprecatedOperators; // Deprecated
     address internal _admin;
     address internal _owner;
+    mapping(address => bool) internal _operators;
 }
 
 /// @title Cyan Wallet Role Manager - A Cyan wallet's role manager's functionalities.
@@ -16,7 +17,7 @@ abstract contract RoleManagerStorage {
 abstract contract IRoleManager is RoleManagerStorage {
     event SetOwner(address owner);
     event SetAdmin(address admin);
-    event SetOperator(uint8 index, address operator);
+    event SetOperator(address operator, bool isActive);
 
     modifier onlyOperator() {
         _checkOnlyOperator();
@@ -50,14 +51,10 @@ abstract contract IRoleManager is RoleManagerStorage {
     /// @return Address of the current admin.
     function getAdmin() external view virtual returns (address);
 
-    /// @notice Sets the operator in the given index.
-    /// @param index Index of the operator.
+    /// @notice Sets the operator status.
     /// @param operator Operator address.
-    function setOperator(uint8 index, address operator) external virtual;
-
-    /// @notice Returns an array of operators.
-    /// @return An array of the operator addresses.
-    function getOperators() external view virtual returns (address[3] memory);
+    /// @param isActive Is active or not.
+    function setOperator(address operator, bool isActive) external virtual;
 
     /// @notice Checks whether the given address is an operator.
     /// @param operator Address that will be checked.

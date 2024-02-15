@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.19;
 
-import "../modules/IModule.sol";
-
 /// @title Cyan Wallet Module Manager Storage - A Cyan wallet's module manager's storage.
 /// @author Bulgantamir Gankhuyag - <bulgaa@usecyan.com>
 /// @author Naranbayar Uuganbayar - <naba@usecyan.com>
@@ -20,8 +18,8 @@ abstract contract ModuleManagerStorage {
 /// @author Bulgantamir Gankhuyag - <bulgaa@usecyan.com>
 /// @author Naranbayar Uuganbayar - <naba@usecyan.com>
 abstract contract IModuleManager is ModuleManagerStorage {
-    event SetModule(address target, bytes4 funcHash, address module);
-    event SetInternalModule(bytes4 funcHash, address module);
+    event SetModule(address target, bytes4 funcHash, address oldModule, address newModule);
+    event SetInternalModule(bytes4 funcHash, address oldModule, address newModule);
 
     /// @notice Sets the handler module of the target's function.
     /// @param target Address of the target contract.

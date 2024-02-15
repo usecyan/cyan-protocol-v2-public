@@ -1,23 +1,24 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.19;
+import "../../thirdparty/opensea/ISeaport.sol";
 
 interface IWallet {
     function executeModule(bytes memory) external returns (bytes memory);
 
-    function transferDefaultedERC721(
+    function transferNonLockedERC721(
         address,
         uint256,
         address
     ) external;
 
-    function transferDefaultedERC1155(
+    function transferNonLockedERC1155(
         address,
         uint256,
         uint256,
         address
     ) external;
 
-    function transferDefaultedCryptoPunk(uint256, address) external;
+    function transferNonLockedCryptoPunk(uint256, address) external;
 
     function setLockedERC721Token(
         address,
@@ -39,5 +40,19 @@ interface IWallet {
 
     function setLockedCryptoPunk(uint256, bool) external;
 
-    function autoPay(uint256, uint256) external;
+    function autoPay(
+        uint256,
+        uint256,
+        uint8
+    ) external;
+
+    function earlyUnwind(
+        uint256,
+        uint256,
+        address,
+        uint256,
+        ISeaport.OfferData memory
+    ) external;
+
+    function isLockedNFT(address, uint256) external view returns (bool);
 }

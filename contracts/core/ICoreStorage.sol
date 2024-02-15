@@ -1,20 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.19;
 
-import "@openzeppelin/contracts/utils/StorageSlot.sol";
-import "@openzeppelin/contracts/utils/Address.sol";
-
 import "./managers/DelegateCallManager.sol";
 import "./managers/RoleManager.sol";
 import "./managers/ModuleManager.sol";
-
-/// @title Cyan Wallet Core Storage - A Cyan wallet's core storage.
-/// @dev This contract must be the very first parent of the Module contracts.
-/// @author Bulgantamir Gankhuyag - <bulgaa@usecyan.com>
-/// @author Naranbayar Uuganbayar - <naba@usecyan.com>
-abstract contract CoreStorage is RoleManagerStorage, ModuleManagerStorage {
-
-}
 
 /// @title Cyan Wallet Core Storage - A Cyan wallet's core storage features.
 /// @dev This contract must be the very first parent of the Core contract and Module contracts.
@@ -31,14 +20,14 @@ abstract contract ICoreStorage is DelegateCallManager, IRoleManager, IModuleMana
         bytes4 funcHash,
         address module
     ) external override noDelegateCall onlyAdmin {
+        emit SetModule(target, funcHash, _modules[target][funcHash], module);
         _modules[target][funcHash] = module;
-        emit SetModule(target, funcHash, module);
     }
 
     /// @inheritdoc IModuleManager
     function setInternalModule(bytes4 funcHash, address module) external override noDelegateCall onlyAdmin {
+        emit SetInternalModule(funcHash, _internalModules[funcHash], module);
         _internalModules[funcHash] = module;
-        emit SetInternalModule(funcHash, module);
     }
 
     /// @inheritdoc IRoleManager
@@ -59,16 +48,10 @@ abstract contract ICoreStorage is DelegateCallManager, IRoleManager, IModuleMana
     }
 
     /// @inheritdoc IRoleManager
-    function setOperator(uint8 index, address operator) external override noDelegateCall onlyAdmin {
-        require(index < 3, "Invalid operator index.");
+    function setOperator(address operator, bool isActive) external override noDelegateCall onlyAdmin {
         require(operator != address(0x0), "Invalid operator address.");
-        _operators[index] = operator;
-        emit SetOperator(index, operator);
-    }
-
-    /// @inheritdoc IRoleManager
-    function getOperators() external view override noDelegateCall returns (address[3] memory) {
-        return _operators;
+        _operators[operator] = isActive;
+        emit SetOperator(operator, isActive);
     }
 
     /// @inheritdoc IRoleManager
@@ -82,12 +65,7 @@ abstract contract ICoreStorage is DelegateCallManager, IRoleManager, IModuleMana
 
     /// @inheritdoc IRoleManager
     function isOperator(address operator) external view override noDelegateCall returns (bool result) {
-        assembly {
-            result := or(
-                or(eq(sload(_operators.slot), operator), eq(sload(add(_operators.slot, 0x1)), operator)),
-                eq(sload(add(_operators.slot, 0x2)), operator)
-            )
-        }
+        return _operators[operator];
     }
 
     /// @inheritdoc IRoleManager

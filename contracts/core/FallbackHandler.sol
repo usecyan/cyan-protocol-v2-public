@@ -4,8 +4,9 @@ pragma solidity 0.8.19;
 import "@openzeppelin/contracts/token/ERC721/IERC721Receiver.sol";
 import "@openzeppelin/contracts/token/ERC1155/IERC1155Receiver.sol";
 
-import "./Utils.sol";
+import "../helpers/Utils.sol";
 import "./CoreStorage.sol";
+import "./Lockers.sol" as Lockers;
 
 /// @title Cyan Wallet Fallback Handler - A Cyan wallet's fallback handler.
 /// @author Bulgantamir Gankhuyag - <bulgaa@usecyan.com>
@@ -76,5 +77,25 @@ contract FallbackHandler is CoreStorage, IERC721Receiver, IERC1155Receiver {
         address signer = Utils.recoverSigner(data, signature);
         require(signer == _owner, "Invalid signer.");
         return ERC1271_MAGIC_VALUE;
+    }
+
+    function isLockedERC721(address collection, uint256 tokenId) external view returns (bool) {
+        return Lockers.isLockedERC721(collection, tokenId);
+    }
+
+    function isLockedByCyanPlanERC721(address collection, uint256 tokenId) external view returns (bool) {
+        return Lockers.isLockedByCyanPlanERC721(collection, tokenId);
+    }
+
+    function isLockedByApePlan(address collection, uint256 tokenId) external view returns (bool) {
+        return Lockers.isLockedByApePlan(collection, tokenId);
+    }
+
+    function getLockedERC1155Amount(address collection, uint256 tokenId) external view returns (uint256) {
+        return Lockers.getLockedERC1155Amount(collection, tokenId);
+    }
+
+    function getApeLockState(address collection, uint256 tokenId) external view returns (uint8) {
+        return Lockers.getApeLockState(collection, tokenId);
     }
 }

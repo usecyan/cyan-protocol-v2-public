@@ -11,8 +11,8 @@ import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts-upgradeable/token/ERC20/utils/SafeERC20Upgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/token/ERC20/IERC20Upgradeable.sol";
 
-import "./CyanVaultTokenV1.sol";
-import "./openzeppelin/ERC1155HolderUpgradeable.sol";
+import "../interfaces/main/ICyanVaultTokenV1.sol";
+import "../interfaces/openzeppelin/ERC1155HolderUpgradeable.sol";
 
 /// @title Cyan Vault - Cyan's staking solution
 /// @author Bulgantamir Gankhuyag - <bulgaa@usecyan.com>
@@ -52,7 +52,7 @@ contract CyanVaultV2 is
     event CollectedServiceFee(uint256 collectedAmount, uint256 remainingAmount);
 
     address public _cyanVaultTokenAddress;
-    CyanVaultTokenV1 private _cyanVaultTokenContract;
+    ICyanVaultTokenV1 private _cyanVaultTokenContract;
 
     address private _stEthTokenContract; // unused
     address private _stableSwapSTETHContract; // unused
@@ -99,7 +99,7 @@ contract CyanVaultV2 is
         __Pausable_init();
 
         _cyanVaultTokenAddress = cyanVaultTokenAddress;
-        _cyanVaultTokenContract = CyanVaultTokenV1(_cyanVaultTokenAddress);
+        _cyanVaultTokenContract = ICyanVaultTokenV1(_cyanVaultTokenAddress);
         _currencyTokenAddress = currencyTokenAddress;
         if (currencyTokenAddress != address(0)) {
             _currencyToken = IERC20Upgradeable(currencyTokenAddress);
@@ -356,7 +356,7 @@ contract CyanVaultV2 is
         if (nonNativeCurrency) {
             _currencyToken.safeTransfer(to, amount);
         } else {
-            (bool success, ) = payable(to).call{value: amount}("");
+            (bool success, ) = payable(to).call{ value: amount }("");
             require(success, "Payment failed: Native token transfer");
         }
     }

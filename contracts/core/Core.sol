@@ -2,9 +2,9 @@
 pragma solidity 0.8.19;
 
 import "./managers/FallbackManager.sol";
-import "./Utils.sol";
-import "./modules/IModule.sol";
-import "./CoreStorage.sol";
+import "./ICoreStorage.sol";
+
+import "../helpers/Utils.sol";
 
 /// @title Cyan Wallet Core - A Cyan wallet's core features.
 /// @author Bulgantamir Gankhuyag - <bulgaa@usecyan.com>

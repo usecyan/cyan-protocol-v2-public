@@ -23,6 +23,76 @@ interface IApeCoinStaking {
         bool isUncommit;
     }
 
+    struct Position {
+        uint256 stakedAmount;
+        int256 rewardsDebt;
+    }
+
+    struct Pool {
+        uint48 lastRewardedTimestampHour;
+        uint16 lastRewardsRangeIndex;
+        uint96 stakedAmount;
+        uint96 accumulatedRewardsPerShare;
+    }
+
+    struct TimeRange {
+        uint48 startTimestampHour;
+        uint48 endTimestampHour;
+        uint96 rewardsPerHour;
+        uint96 capPerPosition;
+    }
+
+    struct PoolUI {
+        uint256 poolId;
+        uint256 stakedAmount;
+        TimeRange currentTimeRange;
+    }
+
+    struct PairingStatus {
+        uint248 tokenId;
+        bool isPaired;
+    }
+
+    struct DashboardStake {
+        uint256 poolId;
+        uint256 tokenId;
+        uint256 deposited;
+        uint256 unclaimed;
+        uint256 rewards24hr;
+        DashboardPair pair;
+    }
+
+    struct DashboardPair {
+        uint256 mainTokenId;
+        uint256 mainTypePoolId;
+    }
+
+    function pools(uint256) external view returns (Pool memory);
+
+    function bakcToMain(uint256, uint256) external view returns (PairingStatus memory);
+
+    function nftPosition(uint256, uint256) external view returns (Position memory);
+
+    function getPoolsUI()
+        external
+        view
+        returns (
+            PoolUI memory,
+            PoolUI memory,
+            PoolUI memory,
+            PoolUI memory
+        );
+
+    function pendingRewards(
+        uint256 _poolId,
+        address _address,
+        uint256 _tokenId
+    ) external view returns (uint256);
+
+    function getApeCoinStake(address _address) external view returns (DashboardStake memory);
+
+    function getTimeRangeBy(uint256 _poolId, uint256 _index) external view returns (TimeRange memory);
+
     function depositApeCoin(uint256 _amount, address _recipient) external;
 
     function depositSelfApeCoin(uint256 _amount) external;

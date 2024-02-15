@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.19;
 
-import "../modules/IModule.sol";
-import "../Utils.sol";
+import "../interfaces/core/IModule.sol";
+import "../helpers/Utils.sol";
 
 /// @title Cyan Wallet Default Module - Forwards all transactions.
 /// @author Bulgantamir Gankhuyag - <bulgaa@usecyan.com>
