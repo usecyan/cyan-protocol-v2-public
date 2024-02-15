@@ -107,6 +107,7 @@ library CyanWalletLogic {
         if (itemType == 3) {
             // CryptoPunks
             ICryptoPunk cryptoPunkContract = ICryptoPunk(collection);
+            if (cryptoPunkContract.punkIndexToAddress(tokenId) != from) revert InvalidItem();
             cryptoPunkContract.buyPunk{ value: 0 }(tokenId);
             cryptoPunkContract.transferPunk(cyanWalletAddress, tokenId);
         } else {

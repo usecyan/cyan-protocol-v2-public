@@ -7,6 +7,7 @@ import "@openzeppelin/contracts-upgradeable/token/ERC20/IERC20Upgradeable.sol";
 
 import "./PaymentPlanTypes.sol";
 import "../../interfaces/core/IWalletApeCoin.sol";
+import "../../interfaces/main/ICyanVaultV2.sol";
 
 /// @title Cyan Core Payment Plan V2 Logic
 /// @author Bulgantamir Gankhuyag - <bulgaa@usecyan.com>
@@ -134,7 +135,7 @@ library PaymentPlanV2Logic {
             uint256 interestFee,
             uint256 serviceFee,
             uint256 totalLoanAmount,
-            uint256 totalInterestFee,
+            ,
             uint256 totalServiceFee,
             ,
 
@@ -143,24 +144,9 @@ library PaymentPlanV2Logic {
         if (isEarlyPayment || (plan.totalNumberOfPayments - plan.counterPaidPayments) == 1) {
             uint8 paidCountWithoutDownPayment = plan.counterPaidPayments - (plan.downPaymentPercent > 0 ? 1 : 0);
             loanAmount = totalLoanAmount - loanAmount * paidCountWithoutDownPayment;
-            interestFee = totalInterestFee - interestFee * paidCountWithoutDownPayment;
             serviceFee = totalServiceFee - serviceFee * plan.counterPaidPayments;
         }
         return (loanAmount, interestFee, serviceFee, loanAmount + interestFee + serviceFee);
-    }
-
-    function calculateInterestFeeDiscount(
-        uint256 baseDiscountRate,
-        uint256 interestFee,
-        Plan memory plan
-    ) internal pure returns (uint256) {
-        uint8 remainingNumOfPayments = plan.totalNumberOfPayments - plan.counterPaidPayments;
-        if (remainingNumOfPayments <= 1) {
-            return interestFee;
-        }
-
-        uint256 payCountWithoutDownPayment = plan.totalNumberOfPayments - (plan.downPaymentPercent > 0 ? 1 : 0);
-        return (interestFee * baseDiscountRate * remainingNumOfPayments) / (10000 * payCountWithoutDownPayment);
     }
 
     /**
@@ -238,5 +224,58 @@ library PaymentPlanV2Logic {
         bytes32 msgHash = keccak256(abi.encodePacked(planId, penaltyAmount, signatureExpiryDate, counterPaidPayments));
         bytes32 signedHash = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", msgHash));
         if (signedHash.recover(signature) != signer) revert InvalidSignature();
+    }
+
+    function verifyEarlyUnwindByCyanSignature(
+        uint256 planId,
+        uint256 sellPrice,
+        uint256 signatureExpiryDate,
+        address cyanBuyerAddress,
+        bytes memory signature
+    ) external pure {
+        bytes32 msgHash = keccak256(abi.encodePacked(planId, sellPrice, signatureExpiryDate));
+        bytes32 signedHash = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", msgHash));
+        if (signedHash.recover(signature) != cyanBuyerAddress) revert InvalidSignature();
+    }
+
+
+    /**
+     * @notice Transfer earned amount to Cyan Vault
+     * @param cyanVaultAddress Original price of the token
+     * @param paidTokenPayment Paid token payment
+     * @param paidInterestFee Paid interest fee
+     */
+    function transferEarnedAmountToCyanVault(
+        address cyanVaultAddress,
+        uint256 paidTokenPayment,
+        uint256 paidInterestFee
+    ) external {
+        address currencyAddress = ICyanVaultV2(payable(cyanVaultAddress)).getCurrencyAddress();
+        if (currencyAddress == address(0)) {
+            ICyanVaultV2(payable(cyanVaultAddress)).earn{ value: paidTokenPayment + paidInterestFee }(
+                paidTokenPayment,
+                paidInterestFee
+            );
+        } else {
+            IERC20Upgradeable erc20Contract = IERC20Upgradeable(currencyAddress);
+            erc20Contract.approve(cyanVaultAddress, paidTokenPayment + paidInterestFee);
+            ICyanVaultV2(payable(cyanVaultAddress)).earn(paidTokenPayment, paidInterestFee);
+        }
+    }
+
+    /**
+     * @notice Getting currency address by vault address
+     * @param vaultAddress Cyan Vault address
+     */
+    function getCurrencyAddressByVaultAddress(address vaultAddress) external view returns (address) {
+        return ICyanVaultV2(payable(vaultAddress)).getCurrencyAddress();
+    }
+
+    // function that changes payment plan status to completed
+    function completePaymentPlan(PaymentPlan storage _paymentPlan) external {
+        _paymentPlan.plan.counterPaidPayments = _paymentPlan.plan.totalNumberOfPayments;
+        _paymentPlan.status = isBNPL(_paymentPlan.status)
+            ? PaymentPlanStatus.BNPL_COMPLETED
+            : PaymentPlanStatus.PAWN_COMPLETED;
     }
 }

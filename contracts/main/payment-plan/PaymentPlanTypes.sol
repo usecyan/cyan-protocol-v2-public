@@ -2,6 +2,11 @@
 pragma solidity 0.8.19;
 
 // DataTypes
+enum PawnCreateType {
+    REGULAR,
+    BEND_DAO,
+    REFINANCE
+}
 enum PaymentPlanStatus {
     BNPL_CREATED,
     BNPL_FUNDED,
@@ -66,6 +71,7 @@ error InvalidBaseDiscountRate();
 error InvalidApeCoinPlan();
 error InvalidBendDaoPlan();
 error InvalidCurrency();
+error InvalidCyanBuyer();
 
 error EthTransferFailed();
 

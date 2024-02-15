@@ -46,12 +46,20 @@ interface IWallet {
         uint8
     ) external;
 
-    function earlyUnwind(
+    function earlyUnwindOpensea(
         uint256,
         uint256,
         address,
         uint256,
         ISeaport.OfferData memory
+    ) external;
+
+    function earlyUnwindCyan(
+        uint256,
+        uint256,
+        address,
+        uint256,
+        address
     ) external;
 
     function isLockedNFT(address, uint256) external view returns (bool);
