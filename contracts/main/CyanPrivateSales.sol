@@ -22,6 +22,7 @@ error InvalidPrice();
 error InvalidAddress();
 error InvalidItem();
 error InvalidCurrency();
+error EthTransferFailed();
 
 /// @title Cyan Private sales contract
 /// @author Bulgantamir Gankhuyag - <bulgaa@usecyan.com>
@@ -39,7 +40,7 @@ contract CyanPrivateSales is AccessControlUpgradeable, ReentrancyGuardUpgradeabl
     event UpdatedCollectionSignatureVersion(uint256 indexed version);
     event UpdatedCyanSigner(address indexed signer);
 
-    struct Item {
+    struct SaleItem {
         address sellerAddress;
         address buyerAddress;
         uint256 signedDate;
@@ -64,6 +65,11 @@ contract CyanPrivateSales is AccessControlUpgradeable, ReentrancyGuardUpgradeabl
     address private cyanSigner;
     uint256 private collectionVersion;
 
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
+    }
+
     function initialize(
         address _cyanSuperAdmin,
         address _walletFactory,
@@ -75,7 +81,6 @@ contract CyanPrivateSales is AccessControlUpgradeable, ReentrancyGuardUpgradeabl
         walletFactory = _walletFactory;
         cyanSigner = _cyanSigner;
         _setupRole(DEFAULT_ADMIN_ROLE, _cyanSuperAdmin);
-        _setupRole(DEFAULT_ADMIN_ROLE, msg.sender);
 
         __AccessControl_init();
         __ReentrancyGuard_init();
@@ -89,7 +94,7 @@ contract CyanPrivateSales is AccessControlUpgradeable, ReentrancyGuardUpgradeabl
      * @param item Item detail to pawn
      * @param signature Signature from Lender
      */
-    function buy(Item calldata item, bytes calldata signature) external payable nonReentrant {
+    function buy(SaleItem calldata item, bytes calldata signature) external payable nonReentrant {
         if (item.contractAddress == address(0)) revert InvalidAddress();
         if (item.tokenType < 1 || item.tokenType > 3) revert InvalidItem();
         if (item.tokenType == 1 && item.tokenAmount != 0) revert InvalidItem();
@@ -114,6 +119,7 @@ contract CyanPrivateSales is AccessControlUpgradeable, ReentrancyGuardUpgradeabl
         if (
             mainAddress != item.buyerAddress &&
             cyanWalletAddress != item.buyerAddress &&
+            item.buyerAddress != address(0) &&
             !hasRole(CYAN_ROLE, msg.sender)
         ) {
             revert InvalidSender();
@@ -126,7 +132,8 @@ contract CyanPrivateSales is AccessControlUpgradeable, ReentrancyGuardUpgradeabl
         if (item.currencyAddress == address(0)) {
             // ETH
             if (item.price != msg.value) revert InvalidPrice();
-            payable(item.sellerAddress).transfer(item.price);
+            (bool success, ) = payable(item.sellerAddress).call{ value: item.price }("");
+            if (!success) revert EthTransferFailed();
         } else {
             // ERC20
             if (msg.value != 0) revert InvalidPrice();
@@ -150,12 +157,13 @@ contract CyanPrivateSales is AccessControlUpgradeable, ReentrancyGuardUpgradeabl
      * @param to Buyer address
      */
     function transferItem(
-        Item memory item,
+        SaleItem memory item,
         address from,
         address to
     ) private {
         if (item.tokenType == 3) {
             ICryptoPunk cryptoPunkContract = ICryptoPunk(item.contractAddress);
+            if (cryptoPunkContract.punkIndexToAddress(item.tokenId) != from) revert InvalidItem();
             cryptoPunkContract.buyPunk{ value: 0 }(item.tokenId);
             cryptoPunkContract.transferPunk(to, item.tokenId);
             return;
@@ -186,7 +194,7 @@ contract CyanPrivateSales is AccessControlUpgradeable, ReentrancyGuardUpgradeabl
      * @notice Seller can cancel their signature
      * @param signature Signature from Seller
      */
-    function cancelSignature(Item calldata item, bytes calldata signature) external nonReentrant {
+    function cancelSignature(SaleItem calldata item, bytes calldata signature) external nonReentrant {
         verifySellerSignature(item, signature);
         if (signatureUsage[signature] == true) revert InvalidSignature();
         if (
@@ -263,10 +271,11 @@ contract CyanPrivateSales is AccessControlUpgradeable, ReentrancyGuardUpgradeabl
         return IFactory(walletFactory).getWalletOwner(cyanWalletAddress);
     }
 
-    function verifySellerSignature(Item calldata item, bytes calldata signature) private view {
+    function verifySellerSignature(SaleItem calldata item, bytes calldata signature) private view {
         // Lenders signature can contain specific tokenId
         bytes32 msgHash = keccak256(
             abi.encodePacked(
+                block.chainid,
                 item.buyerAddress,
                 item.signedDate,
                 item.expiryDate,
@@ -285,7 +294,7 @@ contract CyanPrivateSales is AccessControlUpgradeable, ReentrancyGuardUpgradeabl
             revert InvalidSignature();
         }
 
-        bytes32 collectionMsgHash = keccak256(abi.encodePacked(item.contractAddress, collectionVersion));
+        bytes32 collectionMsgHash = keccak256(abi.encodePacked(item.contractAddress, block.chainid, collectionVersion));
         bytes32 collectionSignedHash = keccak256(
             abi.encodePacked("\x19Ethereum Signed Message:\n32", collectionMsgHash)
         );

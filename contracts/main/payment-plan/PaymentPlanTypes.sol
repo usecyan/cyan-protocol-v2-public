@@ -48,6 +48,12 @@ struct Item {
     uint8 itemType;
 }
 
+struct PaymentAmountInfo {
+    uint256 loanAmount;
+    uint256 interestAmount;
+    uint256 serviceAmount;
+}
+
 // Errors
 error InvalidSender();
 error InvalidBlockNumber();
@@ -72,6 +78,7 @@ error InvalidApeCoinPlan();
 error InvalidBendDaoPlan();
 error InvalidCurrency();
 error InvalidCyanBuyer();
+error InvalidSelector();
 
 error EthTransferFailed();
 

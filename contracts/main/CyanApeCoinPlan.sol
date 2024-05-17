@@ -56,6 +56,11 @@ contract CyanApeCoinPlan is AccessControlUpgradeable, ReentrancyGuardUpgradeable
 
     ICyanApeCoinVault public cyanApeCoinVault;
 
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
+    }
+
     function initialize(
         uint256 _serviceFeeRate,
         address _cyanSigner,
@@ -85,7 +90,6 @@ contract CyanApeCoinPlan is AccessControlUpgradeable, ReentrancyGuardUpgradeable
         getApeCoin().approve(address(getApeStaking()), type(uint256).max);
 
         _setupRole(DEFAULT_ADMIN_ROLE, _cyanSuperAdmin);
-        _setupRole(DEFAULT_ADMIN_ROLE, msg.sender);
 
         __AccessControl_init();
         __ReentrancyGuard_init();
@@ -566,7 +570,7 @@ contract CyanApeCoinPlan is AccessControlUpgradeable, ReentrancyGuardUpgradeable
         if (signedBlockNum + 50 < block.number) revert InvalidSignature();
 
         bytes32 msgHash = keccak256(
-            abi.encodePacked(planId, tokenId, signedBlockNum, amount, poolId, rewardStakeToCyanVault)
+            abi.encodePacked(planId, tokenId, signedBlockNum, amount, poolId, block.chainid, rewardStakeToCyanVault)
         );
         bytes32 signedHash = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", msgHash));
         if (signedHash.recover(signature) != cyanSigner) revert InvalidSignature();
@@ -595,6 +599,7 @@ contract CyanApeCoinPlan is AccessControlUpgradeable, ReentrancyGuardUpgradeable
                 poolId,
                 mainPoolId,
                 signedBlockNum,
+                block.chainid,
                 rewardStakeToCyanVault
             )
         );
@@ -613,7 +618,9 @@ contract CyanApeCoinPlan is AccessControlUpgradeable, ReentrancyGuardUpgradeable
         if (signedBlockNum > block.number) revert InvalidBlockNumber();
         if (signedBlockNum + 50 < block.number) revert InvalidSignature();
 
-        bytes32 msgHash = keccak256(abi.encodePacked(planId, signedBlockNum, amount, poolId, rewardStakeToCyanVault));
+        bytes32 msgHash = keccak256(
+            abi.encodePacked(planId, signedBlockNum, amount, poolId, block.chainid, rewardStakeToCyanVault)
+        );
         bytes32 signedHash = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", msgHash));
         if (signedHash.recover(signature) != cyanSigner) revert InvalidSignature();
     }

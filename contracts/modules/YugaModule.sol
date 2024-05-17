@@ -12,6 +12,7 @@ error TokenIsLocked();
 error AlreadyInLockState();
 error NotPaired();
 error ApeCoinStakingIsLocked();
+error ApeCoinNotLockedByDam();
 
 /// @title Cyan Wallet Yuga Module - A Cyan wallet's Ape & ApeCoin handling module.
 /// @author Bulgantamir Gankhuyag - <bulgaa@usecyan.com>
@@ -28,6 +29,7 @@ contract YugaModule is ERC721Module {
     uint8 public constant LOCK_BIT_INDEX_0 = 0; // Lock bit index of BAYC & MAYC
     uint8 public constant LOCK_BIT_INDEX_1 = 1; // Lock bit index of BAKC
     uint8 public constant LOCK_BIT_INDEX_2 = 2; // Lock bit index of ApeCoin
+    uint8 public constant LOCK_BIT_INDEX_3 = 3; // Lock bit index of DAM
 
     address private immutable BAYC;
     address private immutable MAYC;
@@ -90,13 +92,27 @@ contract YugaModule is ERC721Module {
         if (funcHash == IApeCoinStaking.claimBAKC.selector || funcHash == IApeCoinStaking.claimSelfBAKC.selector) {
             _performPairClaims(data);
         }
+
         if (
             funcHash == IApeCoinStaking.withdrawApeCoin.selector ||
-            funcHash == IApeCoinStaking.withdrawSelfApeCoin.selector ||
-            funcHash == IApeCoinStaking.claimApeCoin.selector ||
-            funcHash == IApeCoinStaking.claimSelfApeCoin.selector
+            funcHash == IApeCoinStaking.withdrawSelfApeCoin.selector
         ) {
+            // When withdrawing from ApeCoin Pool, check if it is locked by DAM or ApePlan
             _performApeCoinStakeChecks();
+            _performDamLockChecks();
+        }
+        if (
+            funcHash == IApeCoinStaking.claimApeCoin.selector || funcHash == IApeCoinStaking.claimSelfApeCoin.selector
+        ) {
+            // When claiming from ApeCoin Pool, check if it is locked by ApePlan
+            _performApeCoinStakeChecks();
+        }
+        if (
+            funcHash == IApeCoinStaking.depositApeCoin.selector ||
+            funcHash == IApeCoinStaking.depositSelfApeCoin.selector
+        ) {
+            // When depositing to ApeCoin Pool, check if it is locked by DAM
+            _performDamLockChecks();
         }
 
         return super.handleTransaction(collection, value, data);
@@ -167,6 +183,10 @@ contract YugaModule is ERC721Module {
         if (_isLocked(address(apeCoin), 0, LOCK_BIT_INDEX_2)) revert ApeCoinStakingIsLocked();
     }
 
+    function _performDamLockChecks() private view {
+        if (_isLocked(address(apeCoin), 0, LOCK_BIT_INDEX_3)) revert ApeCoinStakingIsLocked();
+    }
+
     // Internal module methods, only operators can call these methods
 
     /// @notice Allows operators to lock BAYC and stake to the ape pool.
@@ -229,12 +249,50 @@ contract YugaModule is ERC721Module {
     /// @notice Allows operators to lock ApeCoin pool stake, claim and withdraw function
     /// @param amount Staking ApeCoin amount
     function depositApeCoinAndLock(uint256 amount) external {
+        _performDamLockChecks();
         _lock(address(apeCoin), 0, LOCK_BIT_INDEX_2);
 
         if (amount > 0) {
             apeCoin.approve(address(apeStaking), amount);
             apeStaking.depositSelfApeCoin(amount);
         }
+    }
+
+    /// @notice Allows operators to lock ApeCoin pool stake, claim and withdraw function
+    /// @param amount Staking ApeCoin amount
+    function depositApeCoinAndCreateDamLock(uint256 amount) external {
+        _performApeCoinStakeChecks();
+        _lock(address(apeCoin), 0, LOCK_BIT_INDEX_3);
+
+        if (amount > 0) {
+            apeCoin.approve(address(apeStaking), amount);
+            apeStaking.depositSelfApeCoin(amount);
+        }
+    }
+
+    /// @notice Allows operators to lock ApeCoin pool stake, claim and withdraw function
+    function createDamLock() external {
+        _performApeCoinStakeChecks();
+        _lock(address(apeCoin), 0, LOCK_BIT_INDEX_3);
+    }
+
+    /// @notice Allows operators to stake amount when ape coin is in the Dam Lock
+    /// @param amount Staking ApeCoin amount
+    function increaseApeCoinStakeOnDamLock(uint256 amount) external {
+        if (!_isLocked(address(apeCoin), 0, LOCK_BIT_INDEX_3)) revert ApeCoinNotLockedByDam();
+
+        if (amount > 0) {
+            apeCoin.approve(address(apeStaking), amount);
+            apeStaking.depositSelfApeCoin(amount);
+        }
+    }
+
+    /// @notice Allows operators to unlock ApeCoin pool stake, claim and withdraw function
+    /// @param unstakeAmount Unstake amount
+    function withdrawApeCoinAndRemoveDamLock(uint256 unstakeAmount) external {
+        _unlock(address(apeCoin), 0, LOCK_BIT_INDEX_3);
+
+        apeStaking.withdrawSelfApeCoin(unstakeAmount);
     }
 
     /// @notice Allows operators to unlock BAYC and unstake from the ape pool.

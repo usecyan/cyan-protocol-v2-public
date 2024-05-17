@@ -13,6 +13,7 @@ import "../helpers/Utils.sol";
 contract ERC1155Module is IModule {
     bytes4 private constant ERC1155_SAFE_TRANSFER_FROM = IERC1155.safeTransferFrom.selector;
     bytes4 private constant ERC1155_SAFE_BATCH_TRANSFER_FROM = IERC1155.safeBatchTransferFrom.selector;
+    bytes4 private constant ERC1155_SET_APPROVAL_FOR_ALL = IERC1155.setApprovalForAll.selector;
 
     event IncreaseLockedERC1155Token(address collection, uint256 tokenId, uint256 amount);
     event DecreaseLockedERC1155Token(address collection, uint256 tokenId, uint256 amount);
@@ -71,6 +72,9 @@ contract ERC1155Module is IModule {
                 require(_isAvailable(to, ids[i], amounts[i]), "Cannot perform this action on locked token.");
             }
         }
+
+        require(funcHash != ERC1155_SET_APPROVAL_FOR_ALL, "Cannot perform this action.");
+
         return Utils._execute(to, value, data);
     }
 

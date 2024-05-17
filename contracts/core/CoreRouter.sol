@@ -17,6 +17,12 @@ contract CoreRouter {
         _;
     }
 
+    /// @notice Prevents non delegatecall into the modified method
+    modifier onlyDelegateCall() {
+        require(address(this) != _this, "Cannot be called directly.");
+        _;
+    }
+
     constructor(address core) {
         require(core != address(0x0), "Invalid core address.");
 
@@ -53,11 +59,15 @@ contract CoreRouter {
     /// @notice Returns the address of the core contract.
     /// @return Address of the current core contract.
     function getCore() external view returns (address) {
-        return _core;
+        if (_this == address(this)) {
+            return _core;
+        } else {
+            return CoreRouter(_this).getCore();
+        }
     }
 
     /// @notice Delegates all transcations to the core contract.
-    fallback() external payable {
+    fallback() external payable onlyDelegateCall {
         address core = CoreRouter(_this).getCore();
         assembly {
             calldatacopy(0, 0, calldatasize())

@@ -68,6 +68,11 @@ contract CyanPeerPlan is ICyanPeerPlan, AccessControlUpgradeable, ReentrancyGuar
     uint256 public planCounter;
     uint32 public serviceFeeRate;
 
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
+    }
+
     function initialize(
         address _cyanSuperAdmin,
         address _walletFactory,
@@ -82,7 +87,6 @@ contract CyanPeerPlan is ICyanPeerPlan, AccessControlUpgradeable, ReentrancyGuar
         cyanSigner = _cyanSigner;
         serviceFeeRate = _serviceFeeRate;
         _setupRole(DEFAULT_ADMIN_ROLE, _cyanSuperAdmin);
-        _setupRole(DEFAULT_ADMIN_ROLE, msg.sender);
 
         __AccessControl_init();
         __ReentrancyGuard_init();
@@ -337,6 +341,7 @@ contract CyanPeerPlan is ICyanPeerPlan, AccessControlUpgradeable, ReentrancyGuar
             planId,
             penaltyAmount,
             signatureExpiryDate,
+            block.chainid,
             isExtend,
             _paymentPlan.plan.lenderAddress,
             signature
@@ -365,6 +370,7 @@ contract CyanPeerPlan is ICyanPeerPlan, AccessControlUpgradeable, ReentrancyGuar
             emit ExtendedByRevival(planId, penaltyAmount);
         } else {
             _paymentPlan.status = PlanStatus.COMPLETED;
+            CyanWalletLogic.setLockState(_paymentPlan.cyanWalletAddress, items[planId], false);
             emit CompletedByRevival(planId, penaltyAmount);
         }
     }
@@ -477,14 +483,14 @@ contract CyanPeerPlan is ICyanPeerPlan, AccessControlUpgradeable, ReentrancyGuar
         bytes32 lenderSigHash = keccak256(
             abi.encodePacked(signature.signedDate, signature.expiryDate, signature.maxUsageCount, signature.extendable)
         );
-        bytes32 msgHash = keccak256(abi.encodePacked(itemHash, planHash, lenderSigHash));
+        bytes32 msgHash = keccak256(abi.encodePacked(itemHash, planHash, lenderSigHash, block.chainid));
         bytes32 signedHash = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", msgHash));
         if (signedHash.recover(signature.signature) != plan.lenderAddress) {
             // Lenders signature can be without specific tokenId
             itemHash = keccak256(
                 abi.encodePacked(item.contractAddress, item.amount, item.itemType, item.collectionSignature)
             );
-            msgHash = keccak256(abi.encodePacked(itemHash, planHash, lenderSigHash));
+            msgHash = keccak256(abi.encodePacked(itemHash, planHash, lenderSigHash, block.chainid));
             signedHash = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", msgHash));
 
             if (signedHash.recover(signature.signature) != plan.lenderAddress) {
@@ -492,7 +498,7 @@ contract CyanPeerPlan is ICyanPeerPlan, AccessControlUpgradeable, ReentrancyGuar
             }
         }
 
-        bytes32 collectionMsgHash = keccak256(abi.encodePacked(item.contractAddress, collectionVersion));
+        bytes32 collectionMsgHash = keccak256(abi.encodePacked(item.contractAddress, block.chainid, collectionVersion));
         bytes32 collectionSignedHash = keccak256(
             abi.encodePacked("\x19Ethereum Signed Message:\n32", collectionMsgHash)
         );
@@ -505,17 +511,18 @@ contract CyanPeerPlan is ICyanPeerPlan, AccessControlUpgradeable, ReentrancyGuar
         uint256 planId,
         uint256 penaltyAmount,
         uint256 signatureExpiryDate,
+        uint256 chainid,
         bool isExtend,
         address lenderAddress,
         bytes memory signature
     ) private pure {
-        bytes32 msgHash = keccak256(abi.encodePacked(planId, penaltyAmount, signatureExpiryDate, true));
+        bytes32 msgHash = keccak256(abi.encodePacked(planId, penaltyAmount, signatureExpiryDate, chainid, true));
         bytes32 signedHash = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", msgHash));
         if (isExtend) {
             if (signedHash.recover(signature) != lenderAddress) revert InvalidSignature();
         } else {
             if (signedHash.recover(signature) != lenderAddress) {
-                msgHash = keccak256(abi.encodePacked(planId, penaltyAmount, signatureExpiryDate, false));
+                msgHash = keccak256(abi.encodePacked(planId, penaltyAmount, signatureExpiryDate, chainid, false));
                 signedHash = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", msgHash));
                 if (signedHash.recover(signature) != lenderAddress) revert InvalidSignature();
             }

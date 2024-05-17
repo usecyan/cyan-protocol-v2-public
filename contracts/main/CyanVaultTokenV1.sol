@@ -14,7 +14,6 @@ contract CyanVaultTokenV1 is AccessControl, ERC20 {
         address cyanSuperAdmin
     ) ERC20(_name, _symbol) {
         _setupRole(DEFAULT_ADMIN_ROLE, cyanSuperAdmin);
-        _setupRole(DEFAULT_ADMIN_ROLE, msg.sender);
     }
 
     function mint(address to, uint256 amount) external onlyRole(CYAN_VAULT_ROLE) {
