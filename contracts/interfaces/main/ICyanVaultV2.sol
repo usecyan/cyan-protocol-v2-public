@@ -9,4 +9,6 @@ interface ICyanVaultV2 {
     function earn(uint256 amount, uint256 profit) external payable;
 
     function nftDefaulted(uint256 unpaidAmount, uint256 estimatedPriceOfNFT) external;
+
+    function withdrawLocked(address cyanWalletAddress) external view returns (uint256);
 }

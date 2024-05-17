@@ -13,6 +13,7 @@ import "@openzeppelin/contracts-upgradeable/token/ERC20/IERC20Upgradeable.sol";
 
 import "../interfaces/main/ICyanVaultTokenV1.sol";
 import "../interfaces/openzeppelin/ERC1155HolderUpgradeable.sol";
+import "../interfaces/core/IFactory.sol";
 
 /// @title Cyan Vault - Cyan's staking solution
 /// @author Bulgantamir Gankhuyag - <bulgaa@usecyan.com>
@@ -45,11 +46,13 @@ contract CyanVaultV2 is
     event UpdatedDefaultedNFTAssetAmount(uint256 amount);
     event UpdatedServiceFeePercent(uint256 from, uint256 to);
     event UpdatedSafetyFundPercent(uint256 from, uint256 to);
+    event UpdatedWithdrawLockTerm(uint256 from, uint256 to);
     event InitializedServiceFeePercent(uint256 to);
     event InitializedSafetyFundPercent(uint256 to);
     event ReceivedETH(uint256 amount, address indexed from);
     event WithdrewERC20(address indexed token, address to, uint256 amount);
     event CollectedServiceFee(uint256 collectedAmount, uint256 remainingAmount);
+    event UpdatedWalletFactory(address indexed factory);
 
     address public _cyanVaultTokenAddress;
     ICyanVaultTokenV1 private _cyanVaultTokenContract;
@@ -78,48 +81,67 @@ contract CyanVaultV2 is
     address public _currencyTokenAddress;
     IERC20Upgradeable private _currencyToken;
     bool public nonNativeCurrency;
+    address _walletFactory;
+    uint256 public _withdrawLockTerm;
+    mapping(address => uint256) public withdrawLocked;
 
-    function initialize(
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
+    }
+
+    function initializeV2(
         address cyanVaultTokenAddress,
         address currencyTokenAddress,
         address cyanPaymentPlanAddress,
         address cyanSuperAdmin,
+        address factory,
         uint256 safetyFundPercent,
-        uint256 serviceFeePercent
-    ) external initializer {
-        require(cyanVaultTokenAddress != address(0), "Cyan Vault Token address cannot be zero");
-        require(cyanPaymentPlanAddress != address(0), "Cyan Payment Plan address cannot be zero");
-        require(cyanSuperAdmin != address(0), "Cyan Super Admin address cannot be zero");
-        require(safetyFundPercent <= 10000, "Safety fund percent must be equal or less than 100 percent");
-        require(serviceFeePercent <= 200, "Service fee percent must not be greater than 2 percent");
+        uint256 serviceFeePercent,
+        uint256 withdrawLockTerm
+    ) external reinitializer(2) {
+        // The contract is considered initialized if the vault token address is set.
+        if (_cyanVaultTokenAddress == address(0)) {
+            require(cyanVaultTokenAddress != address(0), "Cyan Vault Token address cannot be zero");
+            require(cyanPaymentPlanAddress != address(0), "Cyan Payment Plan address cannot be zero");
+            require(cyanSuperAdmin != address(0), "Cyan Super Admin address cannot be zero");
+            require(safetyFundPercent <= 10000, "Safety fund percent must be equal or less than 100 percent");
+            require(serviceFeePercent <= 200, "Service fee percent must not be greater than 2 percent");
 
-        __AccessControl_init();
-        __ReentrancyGuard_init();
-        __ERC721Holder_init();
-        __Pausable_init();
+            __AccessControl_init();
+            __ReentrancyGuard_init();
+            __ERC721Holder_init();
+            __Pausable_init();
 
-        _cyanVaultTokenAddress = cyanVaultTokenAddress;
-        _cyanVaultTokenContract = ICyanVaultTokenV1(_cyanVaultTokenAddress);
-        _currencyTokenAddress = currencyTokenAddress;
-        if (currencyTokenAddress != address(0)) {
-            _currencyToken = IERC20Upgradeable(currencyTokenAddress);
-            nonNativeCurrency = true;
-        } else {
-            nonNativeCurrency = false;
+            _cyanVaultTokenAddress = cyanVaultTokenAddress;
+            _cyanVaultTokenContract = ICyanVaultTokenV1(_cyanVaultTokenAddress);
+            _currencyTokenAddress = currencyTokenAddress;
+
+            if (currencyTokenAddress != address(0)) {
+                _currencyToken = IERC20Upgradeable(currencyTokenAddress);
+                nonNativeCurrency = true;
+            } else {
+                nonNativeCurrency = false;
+            }
+            _safetyFundPercent = safetyFundPercent;
+            _serviceFeePercent = serviceFeePercent;
+
+            LOANED_AMOUNT = 0;
+            DEFAULTED_NFT_ASSET_AMOUNT = 0;
+            REMAINING_AMOUNT = 0;
+
+            _setupRole(DEFAULT_ADMIN_ROLE, cyanSuperAdmin);
+            _setupRole(CYAN_PAYMENT_PLAN_ROLE, cyanPaymentPlanAddress);
+
+            emit InitializedServiceFeePercent(serviceFeePercent);
+            emit InitializedSafetyFundPercent(safetyFundPercent);
         }
-        _safetyFundPercent = safetyFundPercent;
-        _serviceFeePercent = serviceFeePercent;
+        require(factory != address(0), "Factory address cannot be zero");
 
-        LOANED_AMOUNT = 0;
-        DEFAULTED_NFT_ASSET_AMOUNT = 0;
-        REMAINING_AMOUNT = 0;
+        _walletFactory = factory;
+        _withdrawLockTerm = withdrawLockTerm;
 
-        _setupRole(DEFAULT_ADMIN_ROLE, cyanSuperAdmin);
-        _setupRole(DEFAULT_ADMIN_ROLE, msg.sender);
-        _setupRole(CYAN_PAYMENT_PLAN_ROLE, cyanPaymentPlanAddress);
-
-        emit InitializedServiceFeePercent(serviceFeePercent);
-        emit InitializedSafetyFundPercent(safetyFundPercent);
+        emit UpdatedWalletFactory(factory);
     }
 
     // User stakes
@@ -130,6 +152,7 @@ contract CyanVaultV2 is
         } else {
             require(msg.value == amount, "Invalid deposit amount");
         }
+        address cyanWalletAddress = IFactory(_walletFactory).getOrDeployWallet(msg.sender);
         // Cyan collecting service fee from deposits
         uint256 cyanServiceFee = (amount * _serviceFeePercent) / 10000;
 
@@ -141,8 +164,10 @@ contract CyanVaultV2 is
         }
         REMAINING_AMOUNT += depositedAmount;
         COLLECTED_SERVICE_FEE_AMOUNT += cyanServiceFee;
-        _cyanVaultTokenContract.mint(msg.sender, mintAmount);
 
+        _cyanVaultTokenContract.mint(cyanWalletAddress, mintAmount);
+
+        withdrawLocked[cyanWalletAddress] = block.timestamp + _withdrawLockTerm;
         emit Deposit(msg.sender, depositedAmount, mintAmount);
     }
 
@@ -224,6 +249,7 @@ contract CyanVaultV2 is
     // User unstakes tokenAmount of tokens and receives withdrawAmount of currency
     function withdraw(uint256 tokenAmount) external nonReentrant whenNotPaused {
         require(tokenAmount > 0, "Non-positive token amount");
+        require(withdrawLocked[msg.sender] < block.timestamp, "Withdrawal locked");
 
         uint256 withdrawableTokenBalance = getWithdrawableBalance(msg.sender);
         require(tokenAmount <= withdrawableTokenBalance, "Not enough active balance in Cyan Vault");
@@ -343,6 +369,11 @@ contract CyanVaultV2 is
         _serviceFeePercent = serviceFeePercent;
     }
 
+    function updateWithdrawLockTerm(uint256 withdrawLockTerm) external nonReentrant onlyRole(DEFAULT_ADMIN_ROLE) {
+        emit UpdatedWithdrawLockTerm(_withdrawLockTerm, withdrawLockTerm);
+        _withdrawLockTerm = withdrawLockTerm;
+    }
+
     function collectServiceFee(uint256 amount) external nonReentrant onlyRole(DEFAULT_ADMIN_ROLE) {
         require(amount <= COLLECTED_SERVICE_FEE_AMOUNT, "Not enough collected service fee");
         COLLECTED_SERVICE_FEE_AMOUNT -= amount;
@@ -385,6 +416,16 @@ contract CyanVaultV2 is
         erc20Contract.safeTransferFrom(from, msg.sender, amount);
 
         emit WithdrewERC20(contractAddress, msg.sender, amount);
+    }
+
+    /**
+     * @notice Updating Cyan wallet factory address that used for deploying new wallets
+     * @param factory New Cyan wallet factory address
+     */
+    function updateWalletFactoryAddress(address factory) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        require(factory != address(0) && _walletFactory != factory, "Invalid factory address");
+        _walletFactory = factory;
+        emit UpdatedWalletFactory(factory);
     }
 
     function pause() external nonReentrant onlyRole(DEFAULT_ADMIN_ROLE) {

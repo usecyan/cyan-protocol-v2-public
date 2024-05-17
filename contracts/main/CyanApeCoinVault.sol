@@ -65,6 +65,11 @@ contract CyanApeCoinVault is AccessControlUpgradeable, ReentrancyGuardUpgradeabl
     // Loan interest rates for each pool. (x100)
     uint256[4] public interestRates;
 
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
+    }
+
     /**
      * @notice Initializes the CyanApeCoinVault contract
      * @param _cyanVaultTokenAddress Address of the CyanVaultToken contract
@@ -108,7 +113,6 @@ contract CyanApeCoinVault is AccessControlUpgradeable, ReentrancyGuardUpgradeabl
         interestRates[3] = _bakcPoolInterestRate;
 
         _setupRole(DEFAULT_ADMIN_ROLE, _cyanSuperAdmin);
-        _setupRole(DEFAULT_ADMIN_ROLE, msg.sender);
 
         emit InitializedServiceFeePercent(_serviceFeePercent);
         emit InitializedSafetyFundPercent(_safetyFundPercent);
@@ -414,6 +418,7 @@ contract CyanApeCoinVault is AccessControlUpgradeable, ReentrancyGuardUpgradeabl
      * @param interestRate The new interest rate to be set.
      */
     function updatePoolInterestRate(uint256 poolId, uint256 interestRate) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        require(poolId <= 3, "Invalid pool id");
         require(interestRate <= 10000, "Interest rate percent must not be greater than 100 percent");
         interestRates[poolId] = interestRate;
         emit InterestRateUpdated(poolId, interestRate);
@@ -437,16 +442,14 @@ contract CyanApeCoinVault is AccessControlUpgradeable, ReentrancyGuardUpgradeabl
     function claimRewardsAndStake(uint256 amount) private {
         IApeCoinStaking.DashboardStake memory dashboard = getApeStaking().getApeCoinStake(address(this));
 
-        if (dashboard.unclaimed > 0) {
-            if (dashboard.unclaimed + amount < APE_COIN_PRECISION) {
-                getApeStaking().withdrawApeCoin(dashboard.deposited, address(this));
-                depositToApeStaking(dashboard.unclaimed + dashboard.deposited + amount);
-            } else {
-                getApeStaking().claimApeCoin(address(this));
-                depositToApeStaking(dashboard.unclaimed + amount);
-            }
+        if (dashboard.unclaimed + amount < APE_COIN_PRECISION) {
+            getApeStaking().withdrawApeCoin(dashboard.deposited, address(this));
+            depositToApeStaking(dashboard.unclaimed + dashboard.deposited + amount);
         } else {
-            depositToApeStaking(amount);
+            if (dashboard.unclaimed > 0) {
+                getApeStaking().claimApeCoin(address(this));
+            }
+            depositToApeStaking(dashboard.unclaimed + amount);
         }
 
         amounts.estimatedCollectedRewardAmount += calculateEstimatedCollectedInterests(dashboard);

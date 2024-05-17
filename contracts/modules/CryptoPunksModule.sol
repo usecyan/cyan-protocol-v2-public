@@ -28,11 +28,7 @@ contract CryptoPunksModule is IModule {
     ) external payable override returns (bytes memory) {
         require(collection == addressProvider.addresses("CRYPTO_PUNKS"), "This module only supports the CryptoPunks.");
         bytes4 funcHash = Utils.parseFunctionSelector(data);
-        if (
-            funcHash == CRYPTO_PUNKS_ACCEPT_BID ||
-            funcHash == CRYPTO_PUNKS_OFFER ||
-            funcHash == CRYPTO_PUNKS_OFFER_TO_ADDRESS
-        ) {
+        if (funcHash == CRYPTO_PUNKS_ACCEPT_BID) {
             uint256 tokenId = Utils.getUint256At(data, 0x4);
             require(!Lockers.isLockedByCryptoPunkPlan(tokenId), "Cannot perform this action on locked token.");
         }
@@ -40,6 +36,9 @@ contract CryptoPunksModule is IModule {
             uint256 tokenId = Utils.getUint256At(data, 0x24);
             require(!Lockers.isLockedByCryptoPunkPlan(tokenId), "Cannot perform this action on locked token.");
         }
+
+        require(funcHash != CRYPTO_PUNKS_OFFER, "Cannot perform this action.");
+        require(funcHash != CRYPTO_PUNKS_OFFER_TO_ADDRESS, "Cannot perform this action.");
 
         return Utils._execute(collection, value, data);
     }

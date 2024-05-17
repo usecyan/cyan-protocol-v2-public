@@ -5,11 +5,15 @@ import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 import "../interfaces/core/IModule.sol";
 import "../helpers/Utils.sol";
+import { AddressProvider } from "../main/AddressProvider.sol";
+import "../interfaces/main/ICyanVaultV2.sol";
 
 /// @title Cyan Wallet ERC20 Module - A Cyan wallet's ERC20 token handling module.
 /// @author Bulgantamir Gankhuyag - <bulgaa@usecyan.com>
 /// @author Naranbayar Uuganbayar - <naba@usecyan.com>
 contract ERC20Module is IModule {
+    AddressProvider private constant addressProvider = AddressProvider(0xCF9A19D879769aDaE5e4f31503AAECDa82568E55);
+
     // keccak256("wallet.ERC20Module.lockedERC20")
     bytes32 private constant LOCKER_SLOT = 0x7f4f1b59be841ba41f04a1366e54ff13c51165e7bf98fa5b51c1abe9f816a09e;
 
@@ -24,6 +28,10 @@ contract ERC20Module is IModule {
     /// @param collection Token address.
     /// @param amount Token amount to be locked.
     function setLockedERC20Token(address collection, uint256 amount) external {
+        uint256 balance = IERC20(collection).balanceOf(address(this));
+        uint256 lockedAmount = getLockedAmount(collection);
+        require(lockedAmount + amount <= balance, "Cannot perform this action on locked token.");
+
         _getLockedTokens()[collection] = amount;
         emit SetLockedERC20Token(collection, amount);
     }
@@ -85,6 +93,12 @@ contract ERC20Module is IModule {
     /// @param amount Requesting amount.
     /// @return Boolean to give truthy if requested amount of non-locked tokens are available.
     function _isAvailable(address collection, uint256 amount) internal view returns (bool) {
+        address vaultAddress = addressProvider.addresses(bytes32(uint256(uint160(collection))));
+        if (vaultAddress != address(0)) {
+            // ERC20 token is Cyan Vault Token
+            return ICyanVaultV2(vaultAddress).withdrawLocked(address(this)) <= block.timestamp;
+        }
+
         uint256 balance = IERC20(collection).balanceOf(address(this));
         uint256 lockedAmount = getLockedAmount(collection);
         return lockedAmount + amount <= balance;

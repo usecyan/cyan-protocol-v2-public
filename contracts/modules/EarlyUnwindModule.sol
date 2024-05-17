@@ -2,13 +2,13 @@
 pragma solidity 0.8.19;
 
 import "@openzeppelin/contracts/token/ERC721/IERC721.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 import "../interfaces/core/IModule.sol";
 import "../helpers/Utils.sol";
 import "../thirdparty/opensea/ISeaport.sol";
-import "../thirdparty/IWETH.sol";
 import "../core/Lockers.sol" as Lockers;
-import { ICyanConduit } from "../interfaces/conduit/ICyanConduit.sol";
+import "../main/payment-plan/PaymentPlanTypes.sol";
 import { AddressProvider } from "../main/AddressProvider.sol";
 
 /// @title Cyan Wallet EarlyUnwindModule Module for OpenSea
@@ -32,20 +32,19 @@ contract EarlyUnwindModule is IModule {
     function earlyUnwindOpensea(
         uint256 payAmount,
         uint256 sellPrice,
-        address collectionAddress,
-        uint256 tokenId,
+        Item calldata item,
         ISeaport.OfferData calldata offerInput
     ) external {
-        IWETH weth = IWETH(addressProvider.addresses("WETH"));
-        IERC721 collection = IERC721(collectionAddress);
+        require(item.itemType == 1, "Item type must be ERC721");
+        IERC20 currency = IERC20(addressProvider.addresses("WETH"));
+        IERC721 collection = IERC721(item.contractAddress);
 
-        require(!Lockers.isLockedByApePlan(address(collection), tokenId), "Token has ape lock");
-        require(payAmount <= sellPrice, "Selling price must be higher than payment amount");
-        require(collection.ownerOf(tokenId) == address(this), "Token is not owned by the wallet");
+        require(!Lockers.isLockedByApePlan(item.contractAddress, item.tokenId), "Token has ape lock");
+        require(collection.ownerOf(item.tokenId) == address(this), "Token is not owned by the wallet");
 
-        uint256 userBalance = weth.balanceOf(address(this));
+        uint256 userBalance = currency.balanceOf(address(this));
         {
-            collection.approve(addressProvider.addresses("SEAPORT_CONDUIT"), tokenId);
+            collection.approve(addressProvider.addresses("SEAPORT_CONDUIT"), item.tokenId);
             ISeaport(addressProvider.addresses("SEAPORT_1_5")).matchAdvancedOrders(
                 offerInput.orders,
                 offerInput.criteriaResolvers,
@@ -53,35 +52,15 @@ contract EarlyUnwindModule is IModule {
                 address(this)
             );
         }
-        require(userBalance + sellPrice == weth.balanceOf(address(this)), "Insufficient balance");
-        require(collection.ownerOf(tokenId) != address(this), "Token is owned by the wallet");
-        weth.approve(msg.sender, payAmount);
+        require(userBalance + sellPrice == currency.balanceOf(address(this)), "Insufficient balance");
+        require(collection.ownerOf(item.tokenId) != address(this), "Token is owned by the wallet");
+        currency.approve(msg.sender, payAmount);
     }
 
     /// @notice Allows operators to sell the locked token for Cyan offer.
     ///     Note: Can only sell if token is locked.
-    function earlyUnwindCyan(
-        uint256 payAmount,
-        uint256 sellPrice,
-        address collectionAddress,
-        uint256 tokenId,
-        address cyanBuyerAddress
-    ) external {
-        IWETH weth = IWETH(addressProvider.addresses("WETH"));
-        IERC721 collection = IERC721(collectionAddress);
-
-        require(!Lockers.isLockedByApePlan(address(collection), tokenId), "Token has ape lock");
-        require(payAmount <= sellPrice, "Selling price must be higher than payment amount");
-        require(collection.ownerOf(tokenId) == address(this), "Token is not owned by the wallet");
-
-        uint256 userBalance = weth.balanceOf(address(this));
-        {
-            ICyanConduit conduit = ICyanConduit(addressProvider.addresses("CYAN_CONDUIT"));
-            conduit.transferERC20(cyanBuyerAddress, address(this), address(weth), sellPrice);
-        }
-
-        require(userBalance + sellPrice == weth.balanceOf(address(this)), "Insufficient balance");
-        require(collection.ownerOf(tokenId) != address(this), "Token is owned by the wallet");
-        weth.approve(msg.sender, payAmount);
+    function earlyUnwindCyan(uint256 payAmount, address currencyAddress) external {
+        IERC20 currency = IERC20(currencyAddress == address(0) ? addressProvider.addresses("WETH") : currencyAddress);
+        currency.approve(msg.sender, payAmount);
     }
 }
