@@ -59,7 +59,10 @@ contract ERC721Module is IModule {
     ) public {
         Lockers.CyanPlanLockerERC721 storage locker = Lockers.getCyanPlanLockerERC721();
         require(locker.tokens[collection][tokenId] != isLocked, "Token already in given state.");
-
+        IERC721 erc721 = IERC721(collection);
+        if (erc721.getApproved(tokenId) != address(0)) {
+            erc721.approve(address(0), tokenId);
+        }
         locker.tokens[collection][tokenId] = isLocked;
         if (isLocked) {
             ++locker.count[collection];

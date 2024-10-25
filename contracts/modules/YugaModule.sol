@@ -431,6 +431,13 @@ contract YugaModule is ERC721Module {
         Lockers.ApePlanLocker storage locker = Lockers.getApePlanLocker();
         if (_isLocked(collection, tokenId, bitIndex)) revert AlreadyInLockState();
 
+        if (collection != address(apeCoin)) {
+            IERC721 erc721 = IERC721(collection);
+            if (erc721.getApproved(tokenId) != address(0)) {
+                erc721.approve(address(0), tokenId);
+            }
+        }
+
         locker.tokens[collection][tokenId] |= (uint8(1) << bitIndex);
         emit SetLockedApeNFT(collection, tokenId, locker.tokens[collection][tokenId]);
     }

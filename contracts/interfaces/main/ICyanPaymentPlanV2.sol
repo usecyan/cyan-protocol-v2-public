@@ -9,4 +9,28 @@ interface ICyanPaymentPlanV2 {
     function getPlanStatus(uint256) external view returns (PaymentPlanStatus);
 
     function getCurrencyAddressByPlanId(uint256) external view returns (address);
+
+    function earlyUnwindOpensea(
+        uint256,
+        uint256[2] calldata,
+        uint256,
+        bytes memory,
+        uint256,
+        bytes memory
+    ) external;
+
+    function earlyUnwindCyan(
+        uint256,
+        uint256[2] calldata,
+        uint256,
+        address,
+        uint256,
+        bytes memory
+    ) external;
+
+    function liquidate(
+        uint256,
+        uint256[2] calldata,
+        uint256
+    ) external;
 }

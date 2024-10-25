@@ -248,6 +248,21 @@ library PaymentPlanV2Logic {
         if (signedHash.recover(signature) != signer) revert InvalidSignature();
     }
 
+    function verifyEarlyUnwindByOpeanseaSignature(
+        uint256 planId,
+        uint256 sellPrice,
+        bytes memory offer,
+        uint256 signatureExpiryDate,
+        uint256 chainid,
+        address signer,
+        bytes memory signature
+    ) external pure {
+        bytes32 offerHash = keccak256(abi.encodePacked(offer));
+        bytes32 msgHash = keccak256(abi.encodePacked(planId, sellPrice, offerHash, signatureExpiryDate, chainid));
+        bytes32 signedHash = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", msgHash));
+        if (signedHash.recover(signature) != signer) revert InvalidSignature();
+    }
+
     function verifyEarlyUnwindByCyanSignature(
         uint256 planId,
         uint256 sellPrice,
