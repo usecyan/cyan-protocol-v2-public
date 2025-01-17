@@ -10,6 +10,7 @@ import "@openzeppelin/contracts-upgradeable/token/ERC20/IERC20Upgradeable.sol";
 
 import "../interfaces/main/ICyanVaultTokenV1.sol";
 import "../interfaces/IApeCoinStaking.sol";
+import "../interfaces/core/IFactory.sol";
 import { AddressProvider } from "../main/AddressProvider.sol";
 
 /// @title Cyan Ape Coin Vault - Cyan's ApeCoin staking solution
@@ -38,10 +39,12 @@ contract CyanApeCoinVault is AccessControlUpgradeable, ReentrancyGuardUpgradeabl
     event InitializedSafetyFundPercent(uint256 to);
     event CollectedServiceFee();
     event InterestRateUpdated(uint256 poolId, uint256 interestRate);
+    event UpdatedWalletFactory(address indexed factory);
+    event UpdatedWithdrawLockTerm(uint256 from, uint256 to);
 
     struct Amounts {
         uint256[4] loanedAmount;
-        uint256 estimatedCollectedRewardAmount;
+        uint256 remainingAmount;
         uint256 collectedServiceFeeAmount;
     }
 
@@ -64,6 +67,10 @@ contract CyanApeCoinVault is AccessControlUpgradeable, ReentrancyGuardUpgradeabl
 
     // Loan interest rates for each pool. (x100)
     uint256[4] public interestRates;
+
+    address walletFactory;
+    mapping(address => uint256) public withdrawLocked;
+    uint256 public withdrawLockTerm;
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -118,6 +125,15 @@ contract CyanApeCoinVault is AccessControlUpgradeable, ReentrancyGuardUpgradeabl
         emit InitializedSafetyFundPercent(_safetyFundPercent);
     }
 
+    function initializeV2(address _walletFactory, uint256 _withdrawLockTerm) external reinitializer(2) {
+        IApeCoinStaking.DashboardStake memory dashboard = getApeStaking().getApeCoinStake(address(this));
+        amounts.remainingAmount = dashboard.deposited + dashboard.unclaimed;
+        getApeStaking().withdrawApeCoin(dashboard.deposited, address(this));
+
+        walletFactory = _walletFactory;
+        withdrawLockTerm = _withdrawLockTerm;
+    }
+
     /**
      * @notice Allows a user to deposit ApeCoin into the vault
      * @param depositInfo Information about the deposit including recipient and amount
@@ -132,9 +148,16 @@ contract CyanApeCoinVault is AccessControlUpgradeable, ReentrancyGuardUpgradeabl
         uint256 mintAmount = calculateTokenByCurrency(userDepositedAmount);
 
         getApeCoin().safeTransferFrom(msg.sender, address(this), depositInfo.amount);
+        amounts.remainingAmount += userDepositedAmount;
         amounts.collectedServiceFeeAmount += cyanServiceFee;
 
-        claimRewardsAndStake(userDepositedAmount);
+        if (!hasRole(CYAN_APE_PLAN_ROLE, msg.sender)) {
+            address cyanWalletAddress = IFactory(walletFactory).getOrDeployWallet(msg.sender);
+            require(cyanWalletAddress == depositInfo.recipient, "Incorrect recipient address");
+
+            withdrawLocked[cyanWalletAddress] = block.timestamp + withdrawLockTerm;
+        }
+
         cyanVaultTokenContract.mint(depositInfo.recipient, mintAmount);
         emit Deposit(depositInfo.recipient, userDepositedAmount, mintAmount);
     }
@@ -172,7 +195,7 @@ contract CyanApeCoinVault is AccessControlUpgradeable, ReentrancyGuardUpgradeabl
             }
         }
         getApeCoin().safeTransferFrom(msg.sender, address(this), totalAmount);
-        claimRewardsAndStake(totalAmount);
+        amounts.remainingAmount += totalAmount;
 
         emit DepositBatch(totalAmount, totalCurrency, totalToken);
     }
@@ -193,7 +216,7 @@ contract CyanApeCoinVault is AccessControlUpgradeable, ReentrancyGuardUpgradeabl
         uint256 maxWithdrawableAmount = getMaxWithdrawableAmount();
         require(amount <= maxWithdrawableAmount, "Not enough balance in the Vault");
 
-        prepareApeCoinForRetrieval(amount);
+        amounts.remainingAmount -= amount;
         amounts.loanedAmount[poolId] += amount;
         getApeCoin().safeTransfer(to, amount);
 
@@ -213,18 +236,10 @@ contract CyanApeCoinVault is AccessControlUpgradeable, ReentrancyGuardUpgradeabl
     ) external nonReentrant onlyRole(CYAN_APE_PLAN_ROLE) {
         uint256 totalAmount = amount + profit;
         getApeCoin().safeTransferFrom(msg.sender, address(this), totalAmount);
-        claimRewardsAndStake(totalAmount);
 
+        amounts.remainingAmount += totalAmount;
         if (amount > 0) {
             amounts.loanedAmount[poolId] -= amount;
-        }
-
-        if (profit > 0) {
-            if (amounts.estimatedCollectedRewardAmount >= profit) {
-                amounts.estimatedCollectedRewardAmount -= profit;
-            } else {
-                amounts.estimatedCollectedRewardAmount = 0;
-            }
         }
 
         emit PayLoan(amount, profit, poolId);
@@ -236,23 +251,10 @@ contract CyanApeCoinVault is AccessControlUpgradeable, ReentrancyGuardUpgradeabl
      */
     function earn(uint256 profit) external nonReentrant onlyRole(CYAN_APE_PLAN_ROLE) {
         getApeCoin().safeTransferFrom(msg.sender, address(this), profit);
-        claimRewardsAndStake(profit);
 
-        if (amounts.estimatedCollectedRewardAmount >= profit) {
-            amounts.estimatedCollectedRewardAmount -= profit;
-        } else {
-            amounts.estimatedCollectedRewardAmount = 0;
-        }
+        amounts.remainingAmount += profit;
 
         emit EarnInterest(profit);
-    }
-
-    /**
-     * @notice Compounds the rewards in the vault by claiming the collected rewards and staking them
-     */
-    function autoCompound() external nonReentrant {
-        claimRewardsAndStake(0);
-        emit AutoCompounded();
     }
 
     /**
@@ -261,13 +263,14 @@ contract CyanApeCoinVault is AccessControlUpgradeable, ReentrancyGuardUpgradeabl
      */
     function withdraw(uint256 tokenAmount) external nonReentrant whenNotPaused {
         require(tokenAmount > 0, "Non-positive token amount");
+        require(withdrawLocked[msg.sender] < block.timestamp, "Withdrawal locked");
 
         uint256 withdrawableTokenBalance = getWithdrawableBalance(msg.sender);
         require(tokenAmount <= withdrawableTokenBalance, "Not enough active balance in Cyan Vault");
 
         uint256 withdrawAmount = calculateCurrencyByToken(tokenAmount);
 
-        prepareApeCoinForRetrieval(withdrawAmount);
+        amounts.remainingAmount -= withdrawAmount;
         cyanVaultTokenContract.burn(msg.sender, tokenAmount);
         getApeCoin().safeTransfer(msg.sender, withdrawAmount);
 
@@ -297,9 +300,8 @@ contract CyanApeCoinVault is AccessControlUpgradeable, ReentrancyGuardUpgradeabl
     function getMaxWithdrawableAmount() public view returns (uint256) {
         uint256 util = ((amounts.loanedAmount[1] + amounts.loanedAmount[2] + amounts.loanedAmount[3]) *
             safetyFundPercent) / 10000;
-        IApeCoinStaking.DashboardStake memory dashboard = getApeStaking().getApeCoinStake(address(this));
-        if (dashboard.deposited + dashboard.unclaimed > util) {
-            return dashboard.deposited + dashboard.unclaimed - util;
+        if (amounts.remainingAmount > util) {
+            return amounts.remainingAmount - util;
         }
         return 0;
     }
@@ -308,17 +310,8 @@ contract CyanApeCoinVault is AccessControlUpgradeable, ReentrancyGuardUpgradeabl
      * @notice Gets the current asset amounts
      * @return Returns the amounts struct, deposited and unclaimed amounts
      */
-    function getCurrentAssetAmounts()
-        external
-        view
-        returns (
-            Amounts memory,
-            uint256,
-            uint256
-        )
-    {
-        IApeCoinStaking.DashboardStake memory dashboard = getApeStaking().getApeCoinStake(address(this));
-        return (amounts, dashboard.deposited, dashboard.unclaimed);
+    function getCurrentAssetAmounts() external view returns (Amounts memory) {
+        return amounts;
     }
 
     /**
@@ -350,41 +343,13 @@ contract CyanApeCoinVault is AccessControlUpgradeable, ReentrancyGuardUpgradeabl
      * @return uint256 Total token supply of the vault
      */
     function getTotalCurrencyAndToken() private view returns (uint256, uint256) {
-        IApeCoinStaking.DashboardStake memory dashboard = getApeStaking().getApeCoinStake(address(this));
-
-        uint256 totalCurrency = dashboard.deposited +
-            dashboard.unclaimed +
+        uint256 totalCurrency = amounts.remainingAmount +
             amounts.loanedAmount[1] +
             amounts.loanedAmount[2] +
-            amounts.loanedAmount[3] +
-            amounts.estimatedCollectedRewardAmount +
-            calculateEstimatedCollectedInterests(dashboard);
+            amounts.loanedAmount[3];
         uint256 totalToken = cyanVaultTokenContract.totalSupply();
 
         return (totalCurrency, totalToken);
-    }
-
-    /**
-     * @notice Calculate the estimated collected interests based on the current stake status and loaned amounts
-     * @param dashboard The current stake status of the contract
-     * @return uint256 Estimated collected interest
-     */
-    function calculateEstimatedCollectedInterests(IApeCoinStaking.DashboardStake memory dashboard)
-        private
-        view
-        returns (uint256)
-    {
-        return
-            dashboard.deposited == 0
-                ? 0
-                : ((amounts.loanedAmount[1] *
-                    interestRates[1] +
-                    amounts.loanedAmount[2] *
-                    interestRates[2] +
-                    amounts.loanedAmount[3] *
-                    interestRates[3]) * dashboard.unclaimed) /
-                    dashboard.deposited /
-                    10000;
     }
 
     function getPoolInterestRates() external view returns (uint256[4] memory) {
@@ -425,6 +390,25 @@ contract CyanApeCoinVault is AccessControlUpgradeable, ReentrancyGuardUpgradeabl
     }
 
     /**
+     * @notice Updating withdraw lock term
+     * @param _withdrawLockTerm New lock term
+     */
+    function updateWithdrawLockTerm(uint256 _withdrawLockTerm) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        emit UpdatedWithdrawLockTerm(withdrawLockTerm, _withdrawLockTerm);
+        withdrawLockTerm = _withdrawLockTerm;
+    }
+
+    /**
+     * @notice Updating Cyan wallet factory address that used for deploying new wallets
+     * @param factory New Cyan wallet factory address
+     */
+    function updateWalletFactoryAddress(address factory) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        require(factory != address(0) && walletFactory != factory, "Invalid factory address");
+        walletFactory = factory;
+        emit UpdatedWalletFactory(factory);
+    }
+
+    /**
      * @notice Allows the admin to collect the accumulated service fee.
      */
     function collectServiceFee() external nonReentrant onlyRole(DEFAULT_ADMIN_ROLE) {
@@ -433,60 +417,6 @@ contract CyanApeCoinVault is AccessControlUpgradeable, ReentrancyGuardUpgradeabl
         amounts.collectedServiceFeeAmount = 0;
 
         emit CollectedServiceFee();
-    }
-
-    /**
-     * @notice Claims rewards and then stakes them back into the ApeCoin staking contract.
-     * @param amount The amount of ApeCoin to be staked.
-     */
-    function claimRewardsAndStake(uint256 amount) private {
-        IApeCoinStaking.DashboardStake memory dashboard = getApeStaking().getApeCoinStake(address(this));
-
-        if (dashboard.unclaimed + amount < APE_COIN_PRECISION) {
-            getApeStaking().withdrawApeCoin(dashboard.deposited, address(this));
-            depositToApeStaking(dashboard.unclaimed + dashboard.deposited + amount);
-        } else {
-            if (dashboard.unclaimed > 0) {
-                getApeStaking().claimApeCoin(address(this));
-            }
-            depositToApeStaking(dashboard.unclaimed + amount);
-        }
-
-        amounts.estimatedCollectedRewardAmount += calculateEstimatedCollectedInterests(dashboard);
-    }
-
-    /**
-     * @notice Prepares a specific amount of ApeCoin for retrieval from the staking contract.
-     * @param amount The amount of ApeCoin to be prepared for retrieval.
-     */
-    function prepareApeCoinForRetrieval(uint256 amount) private {
-        IApeCoinStaking.DashboardStake memory dashboard = getApeStaking().getApeCoinStake(address(this));
-
-        if (dashboard.unclaimed > 0) {
-            getApeStaking().withdrawApeCoin(dashboard.deposited, address(this));
-            depositToApeStaking(dashboard.unclaimed + dashboard.deposited - amount);
-        } else {
-            getApeStaking().withdrawApeCoin(amount, address(this));
-        }
-
-        amounts.estimatedCollectedRewardAmount += calculateEstimatedCollectedInterests(dashboard);
-    }
-
-    /**
-     * @notice Deposits ApeCoin into the ApeCoin staking contract.
-     * @param amount The amount of ApeCoin to be deposited.
-     */
-    function depositToApeStaking(uint256 amount) private {
-        if (amount > 0) {
-            getApeStaking().depositApeCoin(amount, address(this));
-        }
-    }
-
-    /**
-     * @notice Approve the max amount of ApeCoin for the ApeCoin staking contract
-     */
-    function apeCoinApproval() external nonReentrant onlyRole(DEFAULT_ADMIN_ROLE) {
-        getApeCoin().approve(address(getApeStaking()), type(uint256).max);
     }
 
     function pause() external nonReentrant onlyRole(DEFAULT_ADMIN_ROLE) {

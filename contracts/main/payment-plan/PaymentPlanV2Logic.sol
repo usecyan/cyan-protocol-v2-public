@@ -13,8 +13,6 @@ import "../../interfaces/core/IWalletApeCoin.sol";
 import "../../interfaces/main/ICyanVaultV2.sol";
 import "../../interfaces/core/IFactory.sol";
 import { ICyanConduit } from "../../interfaces/conduit/ICyanConduit.sol";
-import { ILendPoolLoan as IBDaoLendPoolLoan } from "../../thirdparty/benddao/ILendPoolLoan.sol";
-import { DataTypes as BDaoDataTypes } from "../../thirdparty/benddao/DataTypes.sol";
 import { AddressProvider } from "../../main/AddressProvider.sol";
 
 /// @title Cyan Core Payment Plan V2 Logic
@@ -175,9 +173,8 @@ library PaymentPlanV2Logic {
     function requireCorrectPlanParams(
         bool isBNPL,
         Item calldata item,
-        Plan calldata plan,
-        uint256 signedBlockNum
-    ) public view {
+        Plan calldata plan
+    ) external pure {
         if (item.contractAddress == address(0)) revert InvalidAddress();
         if (item.cyanVaultAddress == address(0)) revert InvalidAddress();
         if (item.itemType < 1 || item.itemType > 3) revert InvalidItem();
@@ -185,8 +182,6 @@ library PaymentPlanV2Logic {
         if (item.itemType == 2 && item.amount == 0) revert InvalidItem();
         if (item.itemType == 3 && item.amount != 0) revert InvalidItem();
 
-        if (signedBlockNum > block.number) revert InvalidBlockNumber();
-        if (signedBlockNum + 50 < block.number) revert InvalidSignature();
         if (plan.serviceFeeRate > 400) revert InvalidServiceFeeRate();
         if (plan.amount == 0) revert InvalidTokenPrice();
         if (plan.interestRate == 0) revert InvalidInterestRate();
@@ -207,11 +202,10 @@ library PaymentPlanV2Logic {
         Item calldata item,
         Plan calldata plan,
         uint256 planId,
-        uint256 signedBlockNum,
-        uint256 chainid,
         address signer,
-        bytes memory signature
-    ) public pure {
+        SignatureParams calldata sign
+    ) external view {
+        if (sign.expiryDate < block.timestamp) revert InvalidSignature();
         bytes32 itemHash = keccak256(
             abi.encodePacked(item.cyanVaultAddress, item.contractAddress, item.tokenId, item.amount, item.itemType)
         );
@@ -227,53 +221,58 @@ library PaymentPlanV2Logic {
                 plan.autoRepayStatus
             )
         );
-        bytes32 msgHash = keccak256(abi.encodePacked(itemHash, planHash, planId, signedBlockNum, chainid));
+        bytes32 msgHash = keccak256(abi.encodePacked(itemHash, planHash, planId, sign.expiryDate, block.chainid));
         bytes32 signedHash = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", msgHash));
-        if (signedHash.recover(signature) != signer) revert InvalidSignature();
+        if (signedHash.recover(sign.signature) != signer) revert InvalidSignature();
     }
 
     function verifyRevivalSignature(
         uint256 planId,
-        uint256 penaltyAmount,
-        uint256 signatureExpiryDate,
-        uint256 chainid,
         uint8 counterPaidPayments,
         address signer,
-        bytes memory signature
-    ) external pure {
+        RevivalParams calldata revival
+    ) external view {
+        if (revival.signatureExpiryDate < block.timestamp) revert InvalidReviveDate();
+
         bytes32 msgHash = keccak256(
-            abi.encodePacked(planId, penaltyAmount, signatureExpiryDate, chainid, counterPaidPayments)
+            abi.encodePacked(
+                planId,
+                revival.penaltyAmount,
+                revival.signatureExpiryDate,
+                block.chainid,
+                counterPaidPayments
+            )
         );
         bytes32 signedHash = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", msgHash));
-        if (signedHash.recover(signature) != signer) revert InvalidSignature();
+        if (signedHash.recover(revival.signature) != signer) revert InvalidSignature();
     }
 
     function verifyEarlyUnwindByOpeanseaSignature(
         uint256 planId,
         uint256 sellPrice,
         bytes memory offer,
-        uint256 signatureExpiryDate,
-        uint256 chainid,
         address signer,
-        bytes memory signature
-    ) external pure {
+        SignatureParams calldata sign
+    ) external view {
+        if (sign.expiryDate < block.timestamp) revert InvalidSignature();
+
         bytes32 offerHash = keccak256(abi.encodePacked(offer));
-        bytes32 msgHash = keccak256(abi.encodePacked(planId, sellPrice, offerHash, signatureExpiryDate, chainid));
+        bytes32 msgHash = keccak256(abi.encodePacked(planId, sellPrice, offerHash, sign.expiryDate, block.chainid));
         bytes32 signedHash = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", msgHash));
-        if (signedHash.recover(signature) != signer) revert InvalidSignature();
+        if (signedHash.recover(sign.signature) != signer) revert InvalidSignature();
     }
 
     function verifyEarlyUnwindByCyanSignature(
         uint256 planId,
         uint256 sellPrice,
-        uint256 signatureExpiryDate,
-        uint256 chainid,
         address cyanBuyerAddress,
-        bytes memory signature
-    ) external pure {
-        bytes32 msgHash = keccak256(abi.encodePacked(planId, sellPrice, signatureExpiryDate, chainid));
+        SignatureParams calldata sign
+    ) external view {
+        if (sign.expiryDate < block.timestamp) revert InvalidSignature();
+
+        bytes32 msgHash = keccak256(abi.encodePacked(planId, sellPrice, sign.expiryDate, block.chainid));
         bytes32 signedHash = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", msgHash));
-        if (signedHash.recover(signature) != cyanBuyerAddress) revert InvalidSignature();
+        if (signedHash.recover(sign.signature) != cyanBuyerAddress) revert InvalidSignature();
     }
 
     function receiveCurrencyFromCyanWallet(
@@ -298,87 +297,33 @@ library PaymentPlanV2Logic {
         return ICyanVaultV2(payable(vaultAddress)).getCurrencyAddress();
     }
 
-    function createPawn(
+    function handlePawnItemTransfer(
         Item calldata item,
-        Plan calldata plan,
-        uint256 planId,
         PawnCreateType createType,
-        uint256 signedBlockNum,
-        address mainWalletAddress,
-        address cyanWalletAddress,
-        address cyanSigner,
-        bytes memory signature
-    ) external returns (bool) {
-        requireCorrectPlanParams(false, item, plan, signedBlockNum);
-        verifySignature(item, plan, planId, signedBlockNum, block.chainid, cyanSigner, signature);
-
-        if (createType == PawnCreateType.BEND_DAO) {
-            ICyanVaultV2(payable(item.cyanVaultAddress)).lend(cyanWalletAddress, plan.amount);
-
-            address currencyAddress = getCurrencyAddressByVaultAddress(item.cyanVaultAddress);
-            migrateBendDaoPlan(item, plan, cyanWalletAddress, currencyAddress);
-
-            if (IERC721Upgradeable(item.contractAddress).ownerOf(item.tokenId) != cyanWalletAddress) {
-                revert InvalidBendDaoPlan();
-            }
-        } else if (createType == PawnCreateType.REFINANCE) {
-            ICyanVaultV2(payable(item.cyanVaultAddress)).lend(address(this), plan.amount);
-        } else {
-            bool isTransferRequired = false;
-            if (item.itemType == 1) {
-                // ERC721, check if item is already in Cyan wallet
-                if (IERC721Upgradeable(item.contractAddress).ownerOf(item.tokenId) != cyanWalletAddress) {
-                    isTransferRequired = true;
-                }
-            } else if (item.itemType == 2) {
-                // ERC1155, check if message sender is Cyan wallet
-                if (msg.sender != cyanWalletAddress) {
-                    isTransferRequired = true;
-                }
-            } else if (item.itemType == 3) {
-                // CryptoPunk, check if item is already in Cyan wallet
-                if (ICryptoPunk(item.contractAddress).punkIndexToAddress(item.tokenId) != cyanWalletAddress) {
-                    isTransferRequired = true;
-                }
-            }
-            ICyanVaultV2(payable(item.cyanVaultAddress)).lend(mainWalletAddress, plan.amount);
-            return isTransferRequired;
+        address cyanWalletAddress
+    ) external view returns (bool) {
+        if (createType == PawnCreateType.REFINANCE) {
+            return false;
         }
-        return false;
-    }
 
-    function migrateBendDaoPlan(
-        Item calldata item,
-        Plan calldata plan,
-        address cyanWallet,
-        address currency
-    ) private {
-        IBDaoLendPoolLoan bendDaoLendPoolLoan = IBDaoLendPoolLoan(addressProvider.addresses("BENDDAO_LEND_POOL_LOAN"));
-        uint256 loanId = bendDaoLendPoolLoan.getCollateralLoanId(item.contractAddress, item.tokenId);
-        (, uint256 loanAmount) = bendDaoLendPoolLoan.getLoanReserveBorrowAmount(loanId);
-
-        BDaoDataTypes.LoanData memory loanData = bendDaoLendPoolLoan.getLoan(loanId);
-        if (loanData.state != BDaoDataTypes.LoanState.Active) revert InvalidBendDaoPlan();
-        if (loanData.borrower != msg.sender) revert InvalidSender();
-        if (plan.amount < loanAmount) revert InvalidAmount();
-        if (loanData.reserveAsset != (currency == address(0) ? addressProvider.addresses("WETH") : currency))
-            revert InvalidCurrency();
-
-        IWallet(cyanWallet).executeModule(
-            abi.encodeWithSelector(
-                IWallet.repayBendDaoLoan.selector,
-                item.contractAddress,
-                item.tokenId,
-                loanAmount,
-                currency
-            )
-        );
-        ICyanConduit(addressProvider.addresses("CYAN_CONDUIT")).transferERC721(
-            loanData.borrower,
-            cyanWallet,
-            item.contractAddress,
-            item.tokenId
-        );
+        bool isTransferRequired = false;
+        if (item.itemType == 1) {
+            // ERC721, check if item is already in Cyan wallet
+            if (IERC721Upgradeable(item.contractAddress).ownerOf(item.tokenId) != cyanWalletAddress) {
+                isTransferRequired = true;
+            }
+        } else if (item.itemType == 2) {
+            // ERC1155, check if message sender is Cyan wallet
+            if (msg.sender != cyanWalletAddress) {
+                isTransferRequired = true;
+            }
+        } else if (item.itemType == 3) {
+            // CryptoPunk, check if item is already in Cyan wallet
+            if (ICryptoPunk(item.contractAddress).punkIndexToAddress(item.tokenId) != cyanWalletAddress) {
+                isTransferRequired = true;
+            }
+        }
+        return isTransferRequired;
     }
 
     function activate(PaymentPlan storage _paymentPlan, Item calldata item) external returns (uint256) {

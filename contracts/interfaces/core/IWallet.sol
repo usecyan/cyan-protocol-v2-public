@@ -57,11 +57,4 @@ interface IWallet {
     function earlyUnwindCyan(uint256, address) external;
 
     function isLockedNFT(address, uint256) external view returns (bool);
-
-    function repayBendDaoLoan(
-        address collection,
-        uint256 tokenId,
-        uint256 amount,
-        address currency
-    ) external;
 }

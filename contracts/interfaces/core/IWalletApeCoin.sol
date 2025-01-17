@@ -15,19 +15,13 @@ interface IWalletApeCoin is IWallet {
         uint224 amount
     ) external;
 
-    function depositApeCoinAndLock(uint256 amount) external;
-
     function withdrawBAYCAndUnlock(uint32 tokenId) external;
 
     function withdrawMAYCAndUnlock(uint32 tokenId) external;
 
     function withdrawBAKCAndUnlock(uint32 tokenId) external;
 
-    function withdrawApeCoinAndUnlock(uint256 unstakeAmount, uint256 serviceFee) external;
-
     function autoCompound(uint256 poolId, uint32 tokenId) external;
-
-    function autoCompoundApeCoinPool() external;
 
     function getApeLockState(address collection, uint256 tokenId) external view returns (uint8);
 
