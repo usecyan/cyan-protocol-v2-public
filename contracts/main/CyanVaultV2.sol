@@ -10,10 +10,12 @@ import "@openzeppelin/contracts-upgradeable/security/PausableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts-upgradeable/token/ERC20/utils/SafeERC20Upgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/token/ERC20/IERC20Upgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/utils/cryptography/ECDSAUpgradeable.sol";
 
 import "../interfaces/main/ICyanVaultTokenV1.sol";
 import "../interfaces/openzeppelin/ERC1155HolderUpgradeable.sol";
 import "../interfaces/core/IFactory.sol";
+import "../interfaces/main/ICyanPaymentPlanV2.sol";
 
 /// @title Cyan Vault - Cyan's staking solution
 /// @author Bulgantamir Gankhuyag - <bulgaa@usecyan.com>
@@ -25,6 +27,7 @@ contract CyanVaultV2 is
     ERC1155HolderUpgradeable,
     PausableUpgradeable
 {
+    using ECDSAUpgradeable for bytes32;
     using SafeERC20Upgradeable for IERC20Upgradeable;
 
     bytes32 public constant CYAN_ROLE = keccak256("CYAN_ROLE");
@@ -34,7 +37,8 @@ contract CyanVaultV2 is
     event Lend(address indexed to, uint256 amount);
     event Earn(uint256 paymentAmount, uint256 profitAmount);
     event NftDefaulted(uint256 unpaidAmount, uint256 estimatedPriceOfNFT);
-    event NftLiquidated(uint256 defaultedAssetsAmount, uint256 soldAmount);
+    event NftLiquidated(uint256 defaultedAssetsAmount, uint256 soldAmount, uint256 prevDefaultedAssetsAmount);
+    event AutoLiquidated(uint256 indexed planId, uint8 autoLiquidationType);
     event Withdraw(address indexed from, uint256 amount, uint256 tokenAmount);
     event GetDefaultedNFT(address indexed to, address indexed contractAddress, uint256 indexed tokenId);
     event GetDefaultedERC1155(
@@ -43,7 +47,7 @@ contract CyanVaultV2 is
         uint256 indexed tokenId,
         uint256 amount
     );
-    event UpdatedDefaultedNFTAssetAmount(uint256 amount);
+    event UpdatedDefaultedNFTAssetAmount(uint256 defaultedAssetsAmount, uint256 prevDefaultedAssetsAmount);
     event UpdatedServiceFeePercent(uint256 from, uint256 to);
     event UpdatedSafetyFundPercent(uint256 from, uint256 to);
     event UpdatedWithdrawLockTerm(uint256 from, uint256 to);
@@ -51,8 +55,18 @@ contract CyanVaultV2 is
     event InitializedSafetyFundPercent(uint256 to);
     event ReceivedETH(uint256 amount, address indexed from);
     event WithdrewERC20(address indexed token, address to, uint256 amount);
-    event CollectedServiceFee(uint256 collectedAmount, uint256 remainingAmount);
+    event CollectedServiceFee(uint256 collectedAmount);
     event UpdatedWalletFactory(address indexed factory);
+    event UpdatedCyanSigner(address indexed signer);
+
+    struct AutoLiquidationInfo {
+        uint256 planId;
+        uint256[2] apePlanIds;
+        uint256 price;
+        address paymentPlanAddress;
+        uint256 signatureExpiryDate;
+        bytes signature;
+    }
 
     address public _cyanVaultTokenAddress;
     ICyanVaultTokenV1 private _cyanVaultTokenContract;
@@ -84,13 +98,15 @@ contract CyanVaultV2 is
     address _walletFactory;
     uint256 public _withdrawLockTerm;
     mapping(address => uint256) public withdrawLocked;
+    bool public autoLiquidationEnabled;
+    address private cyanSigner;
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
         _disableInitializers();
     }
 
-    function initializeV2(
+    function initializeV3(
         address cyanVaultTokenAddress,
         address currencyTokenAddress,
         address cyanPaymentPlanAddress,
@@ -98,8 +114,10 @@ contract CyanVaultV2 is
         address factory,
         uint256 safetyFundPercent,
         uint256 serviceFeePercent,
-        uint256 withdrawLockTerm
-    ) external reinitializer(2) {
+        uint256 withdrawLockTerm,
+        bool autoLiquidation,
+        address signer
+    ) external reinitializer(3) {
         // The contract is considered initialized if the vault token address is set.
         if (_cyanVaultTokenAddress == address(0)) {
             require(cyanVaultTokenAddress != address(0), "Cyan Vault Token address cannot be zero");
@@ -107,6 +125,7 @@ contract CyanVaultV2 is
             require(cyanSuperAdmin != address(0), "Cyan Super Admin address cannot be zero");
             require(safetyFundPercent <= 10000, "Safety fund percent must be equal or less than 100 percent");
             require(serviceFeePercent <= 200, "Service fee percent must not be greater than 2 percent");
+            require(factory != address(0), "Factory address cannot be zero");
 
             __AccessControl_init();
             __ReentrancyGuard_init();
@@ -133,15 +152,19 @@ contract CyanVaultV2 is
             _setupRole(DEFAULT_ADMIN_ROLE, cyanSuperAdmin);
             _setupRole(CYAN_PAYMENT_PLAN_ROLE, cyanPaymentPlanAddress);
 
+            _walletFactory = factory;
+            _withdrawLockTerm = withdrawLockTerm;
+
             emit InitializedServiceFeePercent(serviceFeePercent);
             emit InitializedSafetyFundPercent(safetyFundPercent);
+            emit UpdatedWalletFactory(factory);
         }
-        require(factory != address(0), "Factory address cannot be zero");
+        require(signer != address(0), "Signer address cannot be zero");
 
-        _walletFactory = factory;
-        _withdrawLockTerm = withdrawLockTerm;
+        autoLiquidationEnabled = autoLiquidation;
+        cyanSigner = signer;
 
-        emit UpdatedWalletFactory(factory);
+        emit UpdatedCyanSigner(signer);
     }
 
     // User stakes
@@ -241,9 +264,62 @@ contract CyanVaultV2 is
         }
 
         REMAINING_AMOUNT += liquidatedAmount;
-        DEFAULTED_NFT_ASSET_AMOUNT = totalDefaultedNFTAmount;
+        emit NftLiquidated(liquidatedAmount, totalDefaultedNFTAmount, DEFAULTED_NFT_ASSET_AMOUNT);
 
-        emit NftLiquidated(liquidatedAmount, totalDefaultedNFTAmount);
+        DEFAULTED_NFT_ASSET_AMOUNT = totalDefaultedNFTAmount;
+    }
+
+    function autoLiquidatePlan(AutoLiquidationInfo calldata info)
+        external
+        onlyAutoLiquidated
+        whenNotPaused
+        onlyRole(CYAN_ROLE)
+    {
+        verifyAutoLiquidationSignature(info);
+
+        ICyanPaymentPlanV2 paymentPlan = ICyanPaymentPlanV2(info.paymentPlanAddress);
+        paymentPlan.liquidate(info.planId, info.apePlanIds, info.price);
+        emit AutoLiquidated(info.planId, 0); // Liquidated
+    }
+
+    function autoLiquidateByEarlyUnwindOpensea(
+        AutoLiquidationInfo calldata info,
+        bytes calldata offer,
+        uint256 unwindSignatureExpiryDate,
+        bytes calldata unwindSignature
+    ) external onlyAutoLiquidated whenNotPaused onlyRole(CYAN_ROLE) {
+        verifyAutoLiquidationSignature(info);
+
+        ICyanPaymentPlanV2 paymentPlan = ICyanPaymentPlanV2(info.paymentPlanAddress);
+        paymentPlan.earlyUnwindOpensea(
+            info.planId,
+            info.apePlanIds,
+            info.price,
+            offer,
+            unwindSignatureExpiryDate,
+            unwindSignature
+        );
+        emit AutoLiquidated(info.planId, 1); // Opensea
+    }
+
+    function autoLiquidateByEarlyUnwindCyan(
+        AutoLiquidationInfo calldata info,
+        address cyanBuyerAddress,
+        uint256 unwindSignatureExpiryDate,
+        bytes memory unwindSignature
+    ) external onlyAutoLiquidated whenNotPaused onlyRole(CYAN_ROLE) {
+        verifyAutoLiquidationSignature(info);
+
+        ICyanPaymentPlanV2 paymentPlan = ICyanPaymentPlanV2(info.paymentPlanAddress);
+        paymentPlan.earlyUnwindCyan(
+            info.planId,
+            info.apePlanIds,
+            info.price,
+            cyanBuyerAddress,
+            unwindSignatureExpiryDate,
+            unwindSignature
+        );
+        emit AutoLiquidated(info.planId, 2); // Cyan
     }
 
     // User unstakes tokenAmount of tokens and receives withdrawAmount of currency
@@ -265,8 +341,8 @@ contract CyanVaultV2 is
 
     // Cyan updating total amount of defaulted NFT assets
     function updateDefaultedNFTAssetAmount(uint256 amount) external whenNotPaused onlyRole(CYAN_ROLE) {
+        emit UpdatedDefaultedNFTAssetAmount(amount, DEFAULTED_NFT_ASSET_AMOUNT);
         DEFAULTED_NFT_ASSET_AMOUNT = amount;
-        emit UpdatedDefaultedNFTAssetAmount(amount);
     }
 
     // Get defaulted NFT from Vault to Cyan Admin account
@@ -277,9 +353,7 @@ contract CyanVaultV2 is
         onlyRole(CYAN_ROLE)
     {
         require(contractAddress != address(0), "Zero contract address");
-
         IERC721 originalContract = IERC721(contractAddress);
-
         require(originalContract.ownerOf(tokenId) == address(this), "Vault is not the owner of the token");
 
         originalContract.safeTransferFrom(address(this), msg.sender, tokenId);
@@ -357,30 +431,27 @@ contract CyanVaultV2 is
         return (totalCurrency, totalToken);
     }
 
-    function updateSafetyFundPercent(uint256 safetyFundPercent) external nonReentrant onlyRole(DEFAULT_ADMIN_ROLE) {
+    function updateSafetyFundPercent(uint256 safetyFundPercent) external onlyRole(DEFAULT_ADMIN_ROLE) {
         require(safetyFundPercent <= 10000, "Safety fund percent must be equal or less than 100 percent");
         emit UpdatedSafetyFundPercent(_safetyFundPercent, safetyFundPercent);
         _safetyFundPercent = safetyFundPercent;
     }
 
-    function updateServiceFeePercent(uint256 serviceFeePercent) external nonReentrant onlyRole(DEFAULT_ADMIN_ROLE) {
+    function updateServiceFeePercent(uint256 serviceFeePercent) external onlyRole(DEFAULT_ADMIN_ROLE) {
         require(serviceFeePercent <= 200, "Service fee percent must not be greater than 2 percent");
         emit UpdatedServiceFeePercent(_serviceFeePercent, serviceFeePercent);
         _serviceFeePercent = serviceFeePercent;
     }
 
-    function updateWithdrawLockTerm(uint256 withdrawLockTerm) external nonReentrant onlyRole(DEFAULT_ADMIN_ROLE) {
+    function updateWithdrawLockTerm(uint256 withdrawLockTerm) external onlyRole(DEFAULT_ADMIN_ROLE) {
         emit UpdatedWithdrawLockTerm(_withdrawLockTerm, withdrawLockTerm);
         _withdrawLockTerm = withdrawLockTerm;
     }
 
-    function collectServiceFee(uint256 amount) external nonReentrant onlyRole(DEFAULT_ADMIN_ROLE) {
-        require(amount <= COLLECTED_SERVICE_FEE_AMOUNT, "Not enough collected service fee");
-        COLLECTED_SERVICE_FEE_AMOUNT -= amount;
-
-        safeCurrencyTransfer(msg.sender, amount);
-
-        emit CollectedServiceFee(amount, COLLECTED_SERVICE_FEE_AMOUNT);
+    function collectServiceFee() external nonReentrant onlyRole(DEFAULT_ADMIN_ROLE) {
+        emit CollectedServiceFee(COLLECTED_SERVICE_FEE_AMOUNT);
+        safeCurrencyTransfer(msg.sender, COLLECTED_SERVICE_FEE_AMOUNT);
+        COLLECTED_SERVICE_FEE_AMOUNT = 0;
     }
 
     function safeCurrencyTransfer(address to, uint256 amount) private {
@@ -426,6 +497,37 @@ contract CyanVaultV2 is
         require(factory != address(0) && _walletFactory != factory, "Invalid factory address");
         _walletFactory = factory;
         emit UpdatedWalletFactory(factory);
+    }
+
+    /**
+     * @notice Updating Cyan signer address that used for verifying auto liquidation signature
+     * @param signer New Cyan signer address
+     */
+    function updateCyanSigner(address signer) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        require(signer != address(0), "Invalid signer address");
+        cyanSigner = signer;
+        emit UpdatedCyanSigner(signer);
+    }
+
+    modifier onlyAutoLiquidated() {
+        require(autoLiquidationEnabled, "Auto liquidation is disabled for this vault");
+        _;
+    }
+
+    function verifyAutoLiquidationSignature(AutoLiquidationInfo calldata info) internal view {
+        require(block.timestamp <= info.signatureExpiryDate, "Signature expired");
+        bytes32 msgHash = keccak256(
+            abi.encodePacked(
+                info.planId,
+                info.apePlanIds[0],
+                info.apePlanIds[1],
+                info.price,
+                info.signatureExpiryDate,
+                block.chainid
+            )
+        );
+        bytes32 signedHash = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", msgHash));
+        require(signedHash.recover(info.signature) == cyanSigner, "Invalid Signature");
     }
 
     function pause() external nonReentrant onlyRole(DEFAULT_ADMIN_ROLE) {

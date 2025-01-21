@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.19;
 
-import "../../thirdparty/opensea/ISeaport.sol";
 import { Item } from "../../main/payment-plan/PaymentPlanTypes.sol";
 
 interface IWallet {
@@ -52,17 +51,10 @@ interface IWallet {
         uint256,
         uint256,
         Item memory,
-        ISeaport.OfferData memory
+        bytes memory
     ) external;
 
     function earlyUnwindCyan(uint256, address) external;
 
     function isLockedNFT(address, uint256) external view returns (bool);
-
-    function repayBendDaoLoan(
-        address collection,
-        uint256 tokenId,
-        uint256 amount,
-        address currency
-    ) external;
 }

@@ -54,6 +54,17 @@ struct PaymentAmountInfo {
     uint256 serviceAmount;
 }
 
+struct RevivalParams {
+    uint256 penaltyAmount;
+    uint256 signatureExpiryDate;
+    bytes signature;
+}
+
+struct SignatureParams {
+    uint256 expiryDate;
+    bytes signature;
+}
+
 // Errors
 error InvalidSender();
 error InvalidBlockNumber();
@@ -75,7 +86,6 @@ error InvalidReviveDate();
 error InvalidItem();
 error InvalidBaseDiscountRate();
 error InvalidApeCoinPlan();
-error InvalidBendDaoPlan();
 error InvalidCurrency();
 error InvalidCyanBuyer();
 error InvalidSelector();

@@ -77,18 +77,16 @@ contract CyanPaymentPlanV2 is ICyanPaymentPlanV2, AccessControlUpgradeable, Reen
      * @param item Item detail to BNPL
      * @param plan BNPL plan detail
      * @param planId Plan ID
-     * @param signedBlockNum Signed block number
-     * @param signature Signature from Cyan
+     * @param sign Signature info
      */
     function createBNPL(
         Item calldata item,
         Plan calldata plan,
         uint256 planId,
-        uint256 signedBlockNum,
-        bytes memory signature
+        SignatureParams calldata sign
     ) external payable nonReentrant {
-        PaymentPlanV2Logic.requireCorrectPlanParams(true, item, plan, signedBlockNum);
-        PaymentPlanV2Logic.verifySignature(item, plan, planId, signedBlockNum, block.chainid, cyanSigner, signature);
+        PaymentPlanV2Logic.requireCorrectPlanParams(true, item, plan);
+        PaymentPlanV2Logic.verifySignature(item, plan, planId, cyanSigner, sign);
 
         if (paymentPlan[planId].plan.totalNumberOfPayments != 0) revert PaymentPlanAlreadyExists();
 
@@ -105,7 +103,7 @@ contract CyanPaymentPlanV2 is ICyanPaymentPlanV2, AccessControlUpgradeable, Reen
     }
 
     /**
-     * @notice Lending ETH from Vault for BNPL payment plan
+     * @notice Lending loaned currency from Vault for BNPL payment plan
      * @param planIds Payment plan IDs
      */
     function fundBNPL(uint256[] calldata planIds) external nonReentrant onlyRole(CYAN_ROLE) {
@@ -182,20 +180,9 @@ contract CyanPaymentPlanV2 is ICyanPaymentPlanV2, AccessControlUpgradeable, Reen
         Item calldata item,
         Plan calldata plan,
         uint256 planId,
-        uint256 signedBlockNum,
-        bytes memory signature
+        SignatureParams calldata sign
     ) external nonReentrant {
-        createPawn(item, plan, planId, PawnCreateType.REGULAR, signedBlockNum, signature);
-    }
-
-    function createPawnFromBendDao(
-        Item calldata item,
-        Plan calldata plan,
-        uint256 planId,
-        uint256 signedBlockNum,
-        bytes memory signature
-    ) external nonReentrant {
-        createPawn(item, plan, planId, PawnCreateType.BEND_DAO, signedBlockNum, signature);
+        createPawn(item, plan, planId, plan.amount, PawnCreateType.REGULAR, sign);
     }
 
     function createPawnByRefinance(
@@ -203,16 +190,67 @@ contract CyanPaymentPlanV2 is ICyanPaymentPlanV2, AccessControlUpgradeable, Reen
         Plan calldata plan,
         uint256 planId,
         uint256 existingPlanId,
-        uint256 signedBlockNum,
-        bytes memory signature
+        SignatureParams calldata sign
     ) external payable nonReentrant {
         requireActivePlan(existingPlanId);
+
         PaymentPlan storage existingPaymentPlan = paymentPlan[existingPlanId];
+        (PaymentAmountInfo memory paymentInfo, uint256 currentPayment, ) = getPaymentInfoById(existingPlanId, true);
 
-        address lenderMainWalletAddress = checkIsPlanOwner(msg.sender, existingPaymentPlan.cyanWalletAddress);
+        handleRefinancing(item, plan, existingPlanId, planId, currentPayment, paymentInfo, sign);
 
-        // check item and current plan's item
+        emit CompletedEarly(
+            existingPlanId,
+            existingPaymentPlan.plan.totalNumberOfPayments - existingPaymentPlan.plan.counterPaidPayments
+        );
+    }
+
+    function reviveByRefinance(
+        Item calldata item,
+        Plan calldata plan,
+        uint256 planId,
+        uint256 existingPlanId,
+        SignatureParams calldata sign,
+        RevivalParams calldata revival
+    ) external payable nonReentrant {
+        requireDefaultedPlan(existingPlanId);
+
+        PaymentPlan storage existingPaymentPlan = paymentPlan[existingPlanId];
+        PaymentPlanV2Logic.verifyRevivalSignature(
+            existingPlanId,
+            existingPaymentPlan.plan.counterPaidPayments,
+            cyanSigner,
+            revival
+        );
+
+        (PaymentAmountInfo memory paymentInfo, uint256 currentPayment, ) = getPaymentInfoById(existingPlanId, true);
+
+        currentPayment +=
+            revival.penaltyAmount +
+            paymentInfo.interestAmount *
+            (existingPaymentPlan.plan.totalNumberOfPayments - existingPaymentPlan.plan.counterPaidPayments - 1);
+
+        handleRefinancing(item, plan, existingPlanId, planId, currentPayment, paymentInfo, sign);
+
+        emit CompletedByRevival(existingPlanId, revival.penaltyAmount);
+    }
+
+    function handleRefinancing(
+        Item calldata item,
+        Plan calldata plan,
+        uint256 existingPlanId,
+        uint256 planId,
+        uint256 currentPayment,
+        PaymentAmountInfo memory oldPaymentInfo,
+        SignatureParams calldata sign
+    ) private {
         Item memory existingPlanItem = items[existingPlanId];
+
+        // check current plan currency and requested loan currency
+        address currencyAddress = PaymentPlanV2Logic.getCurrencyAddressByVaultAddress(item.cyanVaultAddress);
+        if (currencyAddress != PaymentPlanV2Logic.getCurrencyAddressByVaultAddress(existingPlanItem.cyanVaultAddress))
+            revert InvalidCurrency();
+
         if (
             !(existingPlanItem.tokenId == item.tokenId &&
                 existingPlanItem.contractAddress == item.contractAddress &&
@@ -220,43 +258,44 @@ contract CyanPaymentPlanV2 is ICyanPaymentPlanV2, AccessControlUpgradeable, Reen
                 existingPlanItem.amount == item.amount)
         ) revert InvalidItem();
 
-        // check current plan currency and requested loan currency
-        address currencyAddress = PaymentPlanV2Logic.getCurrencyAddressByVaultAddress(item.cyanVaultAddress);
-        if (currencyAddress != getCurrencyAddressByPlanId(existingPlanId)) revert InvalidCurrency();
+        PaymentPlan storage existingPaymentPlan = paymentPlan[existingPlanId];
+        address lenderMainWalletAddress = checkIsPlanOwner(msg.sender, existingPaymentPlan.cyanWalletAddress);
 
-        (
-            uint256 payAmountForCollateral,
-            uint256 payAmountForInterest,
-            uint256 payAmountForService,
-            uint256 currentPayment,
-
-        ) = getPaymentInfoByPlanId(existingPlanId, true);
-
-        // creating new plan and lending requested loan amount to payment plan
-        createPawn(item, plan, planId, PawnCreateType.REFINANCE, signedBlockNum, signature);
-
-        // completing previous active plan
-        if (plan.amount < currentPayment) {
-            receiveCurrency(currencyAddress, currentPayment - plan.amount, msg.sender);
-        } else {
-            uint256 transferAmountToUser = plan.amount - currentPayment;
-            if (transferAmountToUser > 0) {
-                sendCurrency(currencyAddress, transferAmountToUser, lenderMainWalletAddress);
+        uint256 newLoaningAmount = plan.amount;
+        uint256 payAmountForCollateral = oldPaymentInfo.loanAmount;
+        if (existingPlanItem.cyanVaultAddress == item.cyanVaultAddress) {
+            uint256 oldLoanEarnings = currentPayment - payAmountForCollateral;
+            if (plan.amount > currentPayment) {
+                uint256 amountToUser = plan.amount - currentPayment;
+                newLoaningAmount = amountToUser + oldLoanEarnings;
+                payAmountForCollateral = 0;
+            } else {
+                uint256 amountFromUser = currentPayment - plan.amount;
+                if (amountFromUser >= oldLoanEarnings) {
+                    payAmountForCollateral = amountFromUser - oldLoanEarnings;
+                    newLoaningAmount = 0;
+                } else {
+                    payAmountForCollateral = 0;
+                    newLoaningAmount = oldLoanEarnings - amountFromUser;
+                }
             }
         }
 
-        claimableServiceFee[currencyAddress] += payAmountForService;
+        // creating new plan and lending requested loan amount to payment plan
+        createPawn(item, plan, planId, newLoaningAmount, PawnCreateType.REFINANCE, sign);
+
+        if (currentPayment > plan.amount) {
+            receiveCurrency(currencyAddress, currentPayment - plan.amount, msg.sender);
+        } else if (plan.amount > currentPayment) {
+            sendCurrency(currencyAddress, plan.amount - currentPayment, lenderMainWalletAddress);
+        }
+
+        claimableServiceFee[currencyAddress] += oldPaymentInfo.serviceAmount;
         PaymentPlanV2Logic.transferEarnedAmountToCyanVault(
             existingPlanItem.cyanVaultAddress,
             payAmountForCollateral,
-            payAmountForInterest
+            currentPayment - oldPaymentInfo.loanAmount - oldPaymentInfo.serviceAmount
         );
-
-        emit CompletedEarly(
-            existingPlanId,
-            existingPaymentPlan.plan.totalNumberOfPayments - existingPaymentPlan.plan.counterPaidPayments
-        );
-
         completePaymentPlan(existingPaymentPlan);
     }
 
@@ -265,36 +304,29 @@ contract CyanPaymentPlanV2 is ICyanPaymentPlanV2, AccessControlUpgradeable, Reen
      * @param item Item detail to pawn
      * @param plan Pawn plan detail
      * @param planId Plan ID
-     * @param signedBlockNum Signed block number
-     * @param signature Signature from Cyan
+     * @param loaningAmount Loaning amount from vault
+     * @param sign Signature info
      */
     function createPawn(
         Item calldata item,
         Plan calldata plan,
         uint256 planId,
+        uint256 loaningAmount,
         PawnCreateType createType,
-        uint256 signedBlockNum,
-        bytes memory signature
+        SignatureParams calldata sign
     ) private {
         if (paymentPlan[planId].plan.totalNumberOfPayments != 0) revert PaymentPlanAlreadyExists();
+        PaymentPlanV2Logic.requireCorrectPlanParams(false, item, plan);
+        PaymentPlanV2Logic.verifySignature(item, plan, planId, cyanSigner, sign);
+
         address cyanWalletAddress = IFactory(walletFactory).getOrDeployWallet(msg.sender);
         address mainAddress = msg.sender;
         if (cyanWalletAddress == msg.sender) {
             mainAddress = getMainWalletAddress(cyanWalletAddress);
         }
 
-        bool isTransferRequired = PaymentPlanV2Logic.createPawn(
-            item,
-            plan,
-            planId,
-            createType,
-            signedBlockNum,
-            mainAddress,
-            cyanWalletAddress,
-            cyanSigner,
-            signature
-        );
-
+        // handling item transfers
+        bool isTransferRequired = PaymentPlanV2Logic.handlePawnItemTransfer(item, createType, cyanWalletAddress);
         if (createType != PawnCreateType.REFINANCE) {
             if (isTransferRequired) {
                 CyanWalletLogic.transferItemAndLock(mainAddress, cyanWalletAddress, item);
@@ -303,6 +335,15 @@ contract CyanPaymentPlanV2 is ICyanPaymentPlanV2, AccessControlUpgradeable, Reen
             }
         }
 
+        // handling vault loan
+        if (loaningAmount > 0) {
+            ICyanVaultV2(payable(item.cyanVaultAddress)).lend(
+                createType == PawnCreateType.REFINANCE ? address(this) : mainAddress,
+                loaningAmount
+            );
+        }
+
+        // storing actual pawn plan
         items[planId] = item;
         paymentPlan[planId] = PaymentPlan(plan, block.timestamp, cyanWalletAddress, PaymentPlanStatus.PAWN_ACTIVE);
 
@@ -321,22 +362,16 @@ contract CyanPaymentPlanV2 is ICyanPaymentPlanV2, AccessControlUpgradeable, Reen
         uint8 numOfRemainingPayments = _paymentPlan.plan.totalNumberOfPayments - _paymentPlan.plan.counterPaidPayments;
         bool shouldComplete = isEarlyPayment || numOfRemainingPayments == 1;
 
-        (
-            uint256 payAmountForCollateral,
-            uint256 payAmountForInterest,
-            uint256 payAmountForService,
-            uint256 currentPayment,
-
-        ) = getPaymentInfoByPlanId(planId, shouldComplete);
+        (PaymentAmountInfo memory paymentInfo, uint256 currentPayment, ) = getPaymentInfoById(planId, shouldComplete);
 
         address currencyAddress = getCurrencyAddressByPlanId(planId);
         receiveCurrency(currencyAddress, currentPayment, msg.sender);
 
-        claimableServiceFee[currencyAddress] += payAmountForService;
+        claimableServiceFee[currencyAddress] += paymentInfo.serviceAmount;
         PaymentPlanV2Logic.transferEarnedAmountToCyanVault(
             items[planId].cyanVaultAddress,
-            payAmountForCollateral,
-            payAmountForInterest
+            paymentInfo.loanAmount,
+            paymentInfo.interestAmount
         );
 
         if (shouldComplete) {
@@ -356,24 +391,37 @@ contract CyanPaymentPlanV2 is ICyanPaymentPlanV2, AccessControlUpgradeable, Reen
 
     /**
      * @notice Liquidate defaulted payment plan
-     * @param planIds Array of plan Ids [CyanPlan ID, BAYC/MAYC Ape Plan ID, BAKC Ape Plan ID]
+     * @param planId Payment Plan ID
+     * @param apePlanIds Array of ape plan Ids [BAYC/MAYC Ape Plan ID, BAKC Ape Plan ID]
      * @param estimatedValue Estimated value of defaulted assets
      */
-    function liquidate(uint256[3] calldata planIds, uint256 estimatedValue) external nonReentrant onlyRole(CYAN_ROLE) {
+    function liquidate(
+        uint256 planId,
+        uint256[2] calldata apePlanIds,
+        uint256 estimatedValue
+    ) external nonReentrant {
         if (estimatedValue == 0) revert InvalidAmount();
-        requireDefaultedPlan(planIds[0]);
 
-        PaymentPlan storage _paymentPlan = paymentPlan[planIds[0]];
-        Item memory _item = items[planIds[0]];
+        PaymentPlan storage _paymentPlan = paymentPlan[planId];
+        Item memory _item = items[planId];
+
+        if (msg.sender == _item.cyanVaultAddress) {
+            requireActivePlan(planId);
+        } else {
+            if (!hasRole(CYAN_ROLE, msg.sender)) {
+                revert InvalidSender();
+            }
+            requireDefaultedPlan(planId);
+        }
 
         PaymentPlanV2Logic.checkAndCompleteApePlans(
             _paymentPlan.cyanWalletAddress,
             _item.contractAddress,
             _item.tokenId,
-            [planIds[1], planIds[2]]
+            apePlanIds
         );
 
-        (uint256 unpaidAmount, , , , ) = getPaymentInfoByPlanId(planIds[0], true);
+        (PaymentAmountInfo memory paymentInfo, , ) = getPaymentInfoById(planId, true);
 
         CyanWalletLogic.setLockState(_paymentPlan.cyanWalletAddress, _item, false);
         CyanWalletLogic.transferNonLockedItem(_paymentPlan.cyanWalletAddress, _item.cyanVaultAddress, _item);
@@ -381,9 +429,9 @@ contract CyanPaymentPlanV2 is ICyanPaymentPlanV2, AccessControlUpgradeable, Reen
         _paymentPlan.status = isBNPL(_paymentPlan.status)
             ? PaymentPlanStatus.BNPL_LIQUIDATED
             : PaymentPlanStatus.PAWN_LIQUIDATED;
-        ICyanVaultV2(payable(_item.cyanVaultAddress)).nftDefaulted(unpaidAmount, estimatedValue);
+        ICyanVaultV2(payable(_item.cyanVaultAddress)).nftDefaulted(paymentInfo.loanAmount, estimatedValue);
 
-        emit LiquidatedPaymentPlan(planIds[0], estimatedValue, unpaidAmount);
+        emit LiquidatedPaymentPlan(planId, estimatedValue, paymentInfo.loanAmount);
     }
 
     /**
@@ -395,7 +443,7 @@ contract CyanPaymentPlanV2 is ICyanPaymentPlanV2, AccessControlUpgradeable, Reen
         if (autoRepayStatus != 1 && autoRepayStatus != 2) revert InvalidAutoRepaymentStatus();
         requireActivePlan(planId);
 
-        (, , , uint256 payAmount, uint256 dueDate) = getPaymentInfoByPlanId(planId, false);
+        (, uint256 payAmount, uint256 dueDate) = getPaymentInfoById(planId, false);
         if ((dueDate - 1 days) > block.timestamp) revert InvalidAutoRepaymentDate();
 
         address cyanWalletAddress = paymentPlan[planId].cyanWalletAddress;
@@ -423,10 +471,20 @@ contract CyanPaymentPlanV2 is ICyanPaymentPlanV2, AccessControlUpgradeable, Reen
      */
     function earlyUnwindOpensea(
         uint256 planId,
+        uint256[2] calldata apePlanIds,
         uint256 sellPrice,
-        ISeaport.OfferData calldata offer
+        bytes calldata offer,
+        uint256 signatureExpiryDate,
+        bytes memory signature
     ) external nonReentrant {
-        earlyUnwind(planId, sellPrice, IWallet.earlyUnwindOpensea.selector, offer, address(0));
+        PaymentPlanV2Logic.verifyEarlyUnwindByOpeanseaSignature(
+            planId,
+            sellPrice,
+            offer,
+            cyanSigner,
+            SignatureParams(signatureExpiryDate, signature)
+        );
+        earlyUnwind(planId, apePlanIds, sellPrice, offer, address(0));
     }
 
     /**
@@ -439,64 +497,64 @@ contract CyanPaymentPlanV2 is ICyanPaymentPlanV2, AccessControlUpgradeable, Reen
      */
     function earlyUnwindCyan(
         uint256 planId,
+        uint256[2] calldata apePlanIds,
         uint256 sellPrice,
-        uint256 signatureExpiryDate,
         address cyanBuyerAddress,
+        uint256 signatureExpiryDate,
         bytes memory signature
     ) external nonReentrant {
-        if (signatureExpiryDate < block.timestamp) revert InvalidSignature();
         PaymentPlanV2Logic.verifyEarlyUnwindByCyanSignature(
             planId,
             sellPrice,
-            signatureExpiryDate,
-            block.chainid,
             cyanBuyerAddress,
-            signature
+            SignatureParams(signatureExpiryDate, signature)
         );
         if (!hasRole(CYAN_ROLE, cyanBuyerAddress)) revert InvalidCyanBuyer();
 
-        ISeaport.OfferData memory offer; // creating empty offer data
-        earlyUnwind(planId, sellPrice, IWallet.earlyUnwindCyan.selector, offer, cyanBuyerAddress);
+        bytes memory offer; // creating empty offer data
+        earlyUnwind(planId, apePlanIds, sellPrice, offer, cyanBuyerAddress);
     }
 
     /**
      * @notice Internal function to handle the common logic of early unwind operations
      * @param planId Payment Plan ID
      * @param sellPrice Sell price of the token
-     * @param selectorName Selector name of the wallet module
      * @param offer Offer data to fulfill seaport order
      * @param cyanBuyerAddress Buyer address from Cyan
      */
     function earlyUnwind(
         uint256 planId,
+        uint256[2] calldata apePlanIds,
         uint256 sellPrice,
-        bytes4 selectorName,
-        ISeaport.OfferData memory offer,
+        bytes memory offer,
         address cyanBuyerAddress
     ) private {
         PaymentPlan storage _paymentPlan = paymentPlan[planId];
         Item memory _item = items[planId];
         requireActivePlan(planId);
 
-        checkIsPlanOwner(msg.sender, _paymentPlan.cyanWalletAddress);
-
         address currencyAddress = getCurrencyAddressByPlanId(planId);
-        if (selectorName != IWallet.earlyUnwindOpensea.selector && selectorName != IWallet.earlyUnwindCyan.selector)
-            revert InvalidSelector();
 
-        (
-            uint256 payAmountForCollateral,
-            uint256 payAmountForInterest,
-            uint256 payAmountForService,
-            uint256 currentPayment,
+        (PaymentAmountInfo memory paymentInfo, uint256 currentPayment, ) = getPaymentInfoById(planId, true);
 
-        ) = getPaymentInfoByPlanId(planId, true);
+        if (msg.sender != _item.cyanVaultAddress) {
+            checkIsPlanOwner(msg.sender, _paymentPlan.cyanWalletAddress);
+        } else {
+            if (currentPayment > sellPrice) revert InvalidAmount();
+        }
+
+        PaymentPlanV2Logic.checkAndCompleteApePlans(
+            _paymentPlan.cyanWalletAddress,
+            _item.contractAddress,
+            _item.tokenId,
+            apePlanIds
+        );
 
         CyanWalletLogic.setLockState(_paymentPlan.cyanWalletAddress, _item, false);
-        if (selectorName == IWallet.earlyUnwindOpensea.selector) {
+        if (cyanBuyerAddress == address(0)) {
             if (currencyAddress != address(0)) revert InvalidCurrency();
             IWallet(_paymentPlan.cyanWalletAddress).executeModule(
-                abi.encodeWithSelector(selectorName, currentPayment, sellPrice, _item, offer)
+                abi.encodeWithSelector(IWallet.earlyUnwindOpensea.selector, currentPayment, sellPrice, _item, offer)
             );
         } else {
             ICyanConduit(addressProvider.addresses(CYAN_CONDUIT)).transferERC20(
@@ -506,7 +564,7 @@ contract CyanPaymentPlanV2 is ICyanPaymentPlanV2, AccessControlUpgradeable, Reen
                 sellPrice
             );
             IWallet(_paymentPlan.cyanWalletAddress).executeModule(
-                abi.encodeWithSelector(selectorName, currentPayment, currencyAddress)
+                abi.encodeWithSelector(IWallet.earlyUnwindCyan.selector, currentPayment, currencyAddress)
             );
             CyanWalletLogic.transferNonLockedItem(_paymentPlan.cyanWalletAddress, cyanBuyerAddress, _item);
         }
@@ -517,11 +575,11 @@ contract CyanPaymentPlanV2 is ICyanPaymentPlanV2, AccessControlUpgradeable, Reen
             currentPayment
         );
 
-        claimableServiceFee[currencyAddress] += payAmountForService;
+        claimableServiceFee[currencyAddress] += paymentInfo.serviceAmount;
         PaymentPlanV2Logic.transferEarnedAmountToCyanVault(
             _item.cyanVaultAddress,
-            payAmountForCollateral,
-            payAmountForInterest
+            paymentInfo.loanAmount,
+            paymentInfo.interestAmount
         );
         completePaymentPlan(_paymentPlan);
 
@@ -533,59 +591,40 @@ contract CyanPaymentPlanV2 is ICyanPaymentPlanV2, AccessControlUpgradeable, Reen
     /**
      * @notice Revive defaulted payment plan with penalty
      * @param planId Payment Plan ID
-     * @param penaltyAmount Amount that penalizes Defaulted plan revival
-     * @param signatureExpiryDate Signature expiry date
-     * @param signature Signature signed by Cyan signer
+     * @param revival Revival parameters for the plan penaltyAmount, signatureExpiryDate and signature
      */
-    function revive(
-        uint256 planId,
-        uint256 penaltyAmount,
-        uint256 signatureExpiryDate,
-        bytes memory signature
-    ) external payable nonReentrant {
+    function revive(uint256 planId, RevivalParams calldata revival) external payable nonReentrant {
         PaymentPlan storage _paymentPlan = paymentPlan[planId];
-        if (signatureExpiryDate < block.timestamp) revert InvalidReviveDate();
-        PaymentPlanV2Logic.verifyRevivalSignature(
-            planId,
-            penaltyAmount,
-            signatureExpiryDate,
-            block.chainid,
-            _paymentPlan.plan.counterPaidPayments,
-            cyanSigner,
-            signature
-        );
+        PaymentPlanV2Logic.verifyRevivalSignature(planId, _paymentPlan.plan.counterPaidPayments, cyanSigner, revival);
         requireDefaultedPlan(planId);
 
-        (
-            uint256 payAmountForCollateral,
-            uint256 payAmountForInterest,
-            uint256 payAmountForService,
-            uint256 currentPayment,
-            uint256 dueDate
-        ) = getPaymentInfoByPlanId(planId, false);
+        (PaymentAmountInfo memory paymentInfo, uint256 currentPayment, uint256 dueDate) = getPaymentInfoById(
+            planId,
+            false
+        );
         if (dueDate + _paymentPlan.plan.term <= block.timestamp) revert InvalidReviveDate();
 
         address currencyAddress = getCurrencyAddressByPlanId(planId);
-        receiveCurrency(currencyAddress, currentPayment + penaltyAmount, msg.sender);
+        receiveCurrency(currencyAddress, currentPayment + revival.penaltyAmount, msg.sender);
 
-        claimableServiceFee[currencyAddress] += payAmountForService;
+        claimableServiceFee[currencyAddress] += paymentInfo.serviceAmount;
         PaymentPlanV2Logic.transferEarnedAmountToCyanVault(
             items[planId].cyanVaultAddress,
-            payAmountForCollateral,
-            payAmountForInterest + penaltyAmount
+            paymentInfo.loanAmount,
+            paymentInfo.interestAmount + revival.penaltyAmount
         );
         if (_paymentPlan.plan.counterPaidPayments + 1 == _paymentPlan.plan.totalNumberOfPayments) {
             completePaymentPlan(_paymentPlan);
             CyanWalletLogic.setLockState(_paymentPlan.cyanWalletAddress, items[planId], false);
-            emit CompletedByRevival(planId, penaltyAmount);
+            emit CompletedByRevival(planId, revival.penaltyAmount);
         } else {
             ++_paymentPlan.plan.counterPaidPayments;
-            emit Revived(planId, penaltyAmount);
+            emit Revived(planId, revival.penaltyAmount);
         }
     }
 
     function getPaymentInfoByPlanId(uint256 planId, bool isEarlyPayment)
-        public
+        external
         view
         returns (
             uint256,
@@ -601,28 +640,53 @@ contract CyanPaymentPlanV2 is ICyanPaymentPlanV2, AccessControlUpgradeable, Reen
         return PaymentPlanV2Logic.getPaymentInfo(plan, isEarlyPayment, paymentPlan[planId].createdDate);
     }
 
+    function getPaymentInfoById(uint256 planId, bool isEarlyPayment)
+        public
+        view
+        returns (
+            PaymentAmountInfo memory amounts,
+            uint256 currentPayment,
+            uint256 dueDate
+        )
+    {
+        Plan memory plan = paymentPlan[planId].plan;
+        if (plan.totalNumberOfPayments == 0) revert PaymentPlanNotFound();
+
+        (
+            amounts.loanAmount,
+            amounts.interestAmount,
+            amounts.serviceAmount,
+            currentPayment,
+            dueDate
+        ) = PaymentPlanV2Logic.getPaymentInfo(plan, isEarlyPayment, paymentPlan[planId].createdDate);
+    }
+
     /**
      * @notice Check if payment plan is pending
      * @param planId Payment Plan ID
      * @return PaymentPlanStatus
      */
     function getPlanStatus(uint256 planId) public view returns (PaymentPlanStatus) {
+        PaymentPlan memory _paymentPlan = paymentPlan[planId];
         if (
-            paymentPlan[planId].status == PaymentPlanStatus.BNPL_ACTIVE ||
-            paymentPlan[planId].status == PaymentPlanStatus.PAWN_ACTIVE
+            _paymentPlan.status == PaymentPlanStatus.BNPL_ACTIVE || _paymentPlan.status == PaymentPlanStatus.PAWN_ACTIVE
         ) {
-            (, , , , uint256 dueDate) = getPaymentInfoByPlanId(planId, false);
+            Plan memory _plan = _paymentPlan.plan;
+            uint8 paidCountWithoutDownPayment = _plan.counterPaidPayments - (_plan.downPaymentPercent > 0 ? 1 : 0);
+            uint256 dueDate = _paymentPlan.createdDate + _plan.term * (paidCountWithoutDownPayment + 1);
+
+            // (, , uint256 dueDate) = getPaymentInfoById(planId, false);
             bool isDefaulted = block.timestamp > dueDate;
 
             if (isDefaulted) {
                 return
-                    paymentPlan[planId].status == PaymentPlanStatus.BNPL_ACTIVE
+                    _paymentPlan.status == PaymentPlanStatus.BNPL_ACTIVE
                         ? PaymentPlanStatus.BNPL_DEFAULTED
                         : PaymentPlanStatus.PAWN_DEFAULTED;
             }
         }
 
-        return paymentPlan[planId].status;
+        return _paymentPlan.status;
     }
 
     /**
@@ -639,7 +703,7 @@ contract CyanPaymentPlanV2 is ICyanPaymentPlanV2, AccessControlUpgradeable, Reen
      * @notice Claiming collected service fee amount
      * @param currencyAddress Currency address
      */
-    function claimServiceFee(address currencyAddress) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    function claimServiceFee(address currencyAddress) external nonReentrant onlyRole(DEFAULT_ADMIN_ROLE) {
         uint256 amount = claimableServiceFee[currencyAddress];
         sendCurrency(currencyAddress, amount, msg.sender);
         claimableServiceFee[currencyAddress] = 0;

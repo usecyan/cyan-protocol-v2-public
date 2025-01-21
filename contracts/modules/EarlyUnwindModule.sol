@@ -33,7 +33,7 @@ contract EarlyUnwindModule is IModule {
         uint256 payAmount,
         uint256 sellPrice,
         Item calldata item,
-        ISeaport.OfferData calldata offerInput
+        bytes calldata osData
     ) external {
         require(item.itemType == 1, "Item type must be ERC721");
         IERC20 currency = IERC20(addressProvider.addresses("WETH"));
@@ -45,13 +45,9 @@ contract EarlyUnwindModule is IModule {
         uint256 userBalance = currency.balanceOf(address(this));
         {
             collection.approve(addressProvider.addresses("SEAPORT_CONDUIT"), item.tokenId);
-            ISeaport(addressProvider.addresses("SEAPORT_1_5")).matchAdvancedOrders(
-                offerInput.orders,
-                offerInput.criteriaResolvers,
-                offerInput.fulfillments,
-                address(this)
-            );
+            Utils._execute(addressProvider.addresses("SEAPORT_1_5"), 0, osData);
         }
+        require(!Lockers.isLockedByApePlan(item.contractAddress, item.tokenId), "Token has ape lock");
         require(userBalance + sellPrice == currency.balanceOf(address(this)), "Insufficient balance");
         require(collection.ownerOf(item.tokenId) != address(this), "Token is owned by the wallet");
         currency.approve(msg.sender, payAmount);

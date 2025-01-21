@@ -21,14 +21,12 @@ contract YugaModule is ERC721Module {
     AddressProvider constant addressProvider = AddressProvider(0xCF9A19D879769aDaE5e4f31503AAECDa82568E55);
 
     // ApePool ids
-    uint256 public constant APECOIN_POOL_ID = 0;
     uint256 public constant BAYC_POOL_ID = 1;
     uint256 public constant MAYC_POOL_ID = 2;
     uint256 public constant BAKC_POOL_ID = 3;
 
     uint8 public constant LOCK_BIT_INDEX_0 = 0; // Lock bit index of BAYC & MAYC
     uint8 public constant LOCK_BIT_INDEX_1 = 1; // Lock bit index of BAKC
-    uint8 public constant LOCK_BIT_INDEX_2 = 2; // Lock bit index of ApeCoin
     uint8 public constant LOCK_BIT_INDEX_3 = 3; // Lock bit index of DAM
 
     address private immutable BAYC;
@@ -97,15 +95,8 @@ contract YugaModule is ERC721Module {
             funcHash == IApeCoinStaking.withdrawApeCoin.selector ||
             funcHash == IApeCoinStaking.withdrawSelfApeCoin.selector
         ) {
-            // When withdrawing from ApeCoin Pool, check if it is locked by DAM or ApePlan
-            _performApeCoinStakeChecks();
+            // When withdrawing from ApeCoin Pool, check if it is locked by DAM
             _performDamLockChecks();
-        }
-        if (
-            funcHash == IApeCoinStaking.claimApeCoin.selector || funcHash == IApeCoinStaking.claimSelfApeCoin.selector
-        ) {
-            // When claiming from ApeCoin Pool, check if it is locked by ApePlan
-            _performApeCoinStakeChecks();
         }
         if (
             funcHash == IApeCoinStaking.depositApeCoin.selector ||
@@ -179,10 +170,6 @@ contract YugaModule is ERC721Module {
         _checkLockOfPairClaims(maycPairs);
     }
 
-    function _performApeCoinStakeChecks() private view {
-        if (_isLocked(address(apeCoin), 0, LOCK_BIT_INDEX_2)) revert ApeCoinStakingIsLocked();
-    }
-
     function _performDamLockChecks() private view {
         if (_isLocked(address(apeCoin), 0, LOCK_BIT_INDEX_3)) revert ApeCoinStakingIsLocked();
     }
@@ -248,20 +235,7 @@ contract YugaModule is ERC721Module {
 
     /// @notice Allows operators to lock ApeCoin pool stake, claim and withdraw function
     /// @param amount Staking ApeCoin amount
-    function depositApeCoinAndLock(uint256 amount) external {
-        _performDamLockChecks();
-        _lock(address(apeCoin), 0, LOCK_BIT_INDEX_2);
-
-        if (amount > 0) {
-            apeCoin.approve(address(apeStaking), amount);
-            apeStaking.depositSelfApeCoin(amount);
-        }
-    }
-
-    /// @notice Allows operators to lock ApeCoin pool stake, claim and withdraw function
-    /// @param amount Staking ApeCoin amount
     function depositApeCoinAndCreateDamLock(uint256 amount) external {
-        _performApeCoinStakeChecks();
         _lock(address(apeCoin), 0, LOCK_BIT_INDEX_3);
 
         if (amount > 0) {
@@ -272,7 +246,6 @@ contract YugaModule is ERC721Module {
 
     /// @notice Allows operators to lock ApeCoin pool stake, claim and withdraw function
     function createDamLock() external {
-        _performApeCoinStakeChecks();
         _lock(address(apeCoin), 0, LOCK_BIT_INDEX_3);
     }
 
@@ -358,22 +331,8 @@ contract YugaModule is ERC721Module {
         apeCoin.transfer(msg.sender, stakedAmount + rewards);
     }
 
-    /// @notice Allows operators to unlock ApeCoin pool stake, claim and withdraw function
-    /// @param unstakeAmount Unstake amount
-    /// @param serviceFee Service fee amount
-    function withdrawApeCoinAndUnlock(uint256 unstakeAmount, uint256 serviceFee) external {
-        _unlock(address(apeCoin), 0, LOCK_BIT_INDEX_2);
-
-        apeStaking.withdrawSelfApeCoin(unstakeAmount);
-        apeCoin.transfer(msg.sender, serviceFee);
-    }
-
     function autoCompound(uint256 poolId, uint32 tokenId) public {
         _claimRewards(poolId, tokenId, msg.sender);
-    }
-
-    function autoCompoundApeCoinPool() public {
-        apeStaking.claimApeCoin(msg.sender);
     }
 
     function _claimRewards(
@@ -430,6 +389,13 @@ contract YugaModule is ERC721Module {
     ) private {
         Lockers.ApePlanLocker storage locker = Lockers.getApePlanLocker();
         if (_isLocked(collection, tokenId, bitIndex)) revert AlreadyInLockState();
+
+        if (collection != address(apeCoin)) {
+            IERC721 erc721 = IERC721(collection);
+            if (erc721.getApproved(tokenId) != address(0)) {
+                erc721.approve(address(0), tokenId);
+            }
+        }
 
         locker.tokens[collection][tokenId] |= (uint8(1) << bitIndex);
         emit SetLockedApeNFT(collection, tokenId, locker.tokens[collection][tokenId]);

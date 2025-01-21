@@ -127,25 +127,11 @@ contract CyanApeCoinPlan is AccessControlUpgradeable, ReentrancyGuardUpgradeable
         return (rewards, interestFee, serviceFee, stakedAmount);
     }
 
-    function calculateApeCoinPoolNumbers(address cyanWalletAddress)
-        private
-        view
-        returns (
-            uint256,
-            uint256,
-            uint256
-        )
-    {
-        IApeCoinStaking.DashboardStake memory dashboard = getApeStaking().getApeCoinStake(cyanWalletAddress);
-        return (dashboard.deposited, dashboard.unclaimed, (dashboard.unclaimed * serviceFeeRate) / 10000);
-    }
-
     /**
      * @notice Creating Ape coin staking plan with BAYC
      * @param planId Plan ID
      * @param tokenId BAYC token ID
      * @param loanAmount Loaned ApeCoin amount
-     * @param rewardStakeToCyanVault If enabled stake rewards to CyanVault, otherwise to ApeCoin pool
      * @param signedBlockNum Signed block number
      * @param signature Signature from Cyan
      */
@@ -153,13 +139,12 @@ contract CyanApeCoinPlan is AccessControlUpgradeable, ReentrancyGuardUpgradeable
         uint256 planId,
         uint32 tokenId,
         uint224 loanAmount,
-        bool rewardStakeToCyanVault,
         uint256 signedBlockNum,
         bytes calldata signature
     ) external nonReentrant {
         if (paymentPlan[planId].cyanWalletAddress != address(0)) revert PlanAlreadyExists();
 
-        verifySignature(planId, signedBlockNum, loanAmount, tokenId, BAYC_POOL_ID, rewardStakeToCyanVault, signature);
+        verifySignature(planId, signedBlockNum, loanAmount, tokenId, BAYC_POOL_ID, signature);
         (address mainAddress, address cyanWalletAddress) = getUserAddresses(msg.sender);
 
         // Transfer underlying NFT if it's not in the Cyan wallet
@@ -184,9 +169,7 @@ contract CyanApeCoinPlan is AccessControlUpgradeable, ReentrancyGuardUpgradeable
             tokenId,
             loanAmount,
             cyanWalletAddress,
-            rewardStakeToCyanVault
-                ? ICyanApeCoinPlan.PaymentPlanStatus.ACTIVE_ACCRUE_CYANVAULT
-                : ICyanApeCoinPlan.PaymentPlanStatus.ACTIVE_ACCRUE_APESTAKING
+            ICyanApeCoinPlan.PaymentPlanStatus.ACTIVE_ACCRUE_CYANVAULT
         );
         paymentPlan[planId] = plan;
         emit CreatedPlan(planId);
@@ -197,7 +180,6 @@ contract CyanApeCoinPlan is AccessControlUpgradeable, ReentrancyGuardUpgradeable
      * @param planId Plan ID
      * @param tokenId MAYC token ID
      * @param loanAmount Loaned ApeCoin amount
-     * @param rewardStakeToCyanVault If enabled stake rewards to CyanVault, otherwise to ApeCoin pool
      * @param signedBlockNum Signed block number
      * @param signature Signature from Cyan
      */
@@ -205,13 +187,12 @@ contract CyanApeCoinPlan is AccessControlUpgradeable, ReentrancyGuardUpgradeable
         uint256 planId,
         uint32 tokenId,
         uint224 loanAmount,
-        bool rewardStakeToCyanVault,
         uint256 signedBlockNum,
         bytes calldata signature
     ) external nonReentrant {
         if (paymentPlan[planId].cyanWalletAddress != address(0)) revert PlanAlreadyExists();
 
-        verifySignature(planId, signedBlockNum, loanAmount, tokenId, MAYC_POOL_ID, rewardStakeToCyanVault, signature);
+        verifySignature(planId, signedBlockNum, loanAmount, tokenId, MAYC_POOL_ID, signature);
         (address mainAddress, address cyanWalletAddress) = getUserAddresses(msg.sender);
 
         // Transfer underlying NFT if it's not in the Cyan wallet
@@ -236,9 +217,7 @@ contract CyanApeCoinPlan is AccessControlUpgradeable, ReentrancyGuardUpgradeable
             tokenId,
             loanAmount,
             cyanWalletAddress,
-            rewardStakeToCyanVault
-                ? ICyanApeCoinPlan.PaymentPlanStatus.ACTIVE_ACCRUE_CYANVAULT
-                : ICyanApeCoinPlan.PaymentPlanStatus.ACTIVE_ACCRUE_APESTAKING
+            ICyanApeCoinPlan.PaymentPlanStatus.ACTIVE_ACCRUE_CYANVAULT
         );
         paymentPlan[planId] = plan;
         emit CreatedPlan(planId);
@@ -250,7 +229,6 @@ contract CyanApeCoinPlan is AccessControlUpgradeable, ReentrancyGuardUpgradeable
      * @param baycTokenId BAYC token ID
      * @param bakcTokenId BAKC token ID
      * @param loanAmount Loaned ApeCoin amount
-     * @param rewardStakeToCyanVault If enabled stake rewards to CyanVault, otherwise to ApeCoin pool
      * @param signedBlockNum Signed block number
      * @param signature Signature from Cyan
      */
@@ -259,7 +237,6 @@ contract CyanApeCoinPlan is AccessControlUpgradeable, ReentrancyGuardUpgradeable
         uint32 baycTokenId,
         uint32 bakcTokenId,
         uint224 loanAmount,
-        bool rewardStakeToCyanVault,
         uint256 signedBlockNum,
         bytes calldata signature
     ) external nonReentrant {
@@ -271,11 +248,10 @@ contract CyanApeCoinPlan is AccessControlUpgradeable, ReentrancyGuardUpgradeable
             BAKC_POOL_ID,
             BAYC_POOL_ID,
             signedBlockNum,
-            rewardStakeToCyanVault,
             signature
         );
 
-        createBakcPlan(planId, loanAmount, baycTokenId, bakcTokenId, "BAYC", rewardStakeToCyanVault);
+        createBakcPlan(planId, loanAmount, baycTokenId, bakcTokenId, "BAYC");
     }
 
     /**
@@ -284,7 +260,6 @@ contract CyanApeCoinPlan is AccessControlUpgradeable, ReentrancyGuardUpgradeable
      * @param maycTokenId MAYC token ID
      * @param bakcTokenId BAKC token ID
      * @param loanAmount Loaned ApeCoin amount
-     * @param rewardStakeToCyanVault If enabled stake rewards to CyanVault, otherwise to ApeCoin pool
      * @param signedBlockNum Signed block number
      * @param signature Signature from Cyan
      */
@@ -293,7 +268,6 @@ contract CyanApeCoinPlan is AccessControlUpgradeable, ReentrancyGuardUpgradeable
         uint32 maycTokenId,
         uint32 bakcTokenId,
         uint224 loanAmount,
-        bool rewardStakeToCyanVault,
         uint256 signedBlockNum,
         bytes calldata signature
     ) external nonReentrant {
@@ -305,11 +279,10 @@ contract CyanApeCoinPlan is AccessControlUpgradeable, ReentrancyGuardUpgradeable
             BAKC_POOL_ID,
             MAYC_POOL_ID,
             signedBlockNum,
-            rewardStakeToCyanVault,
             signature
         );
 
-        createBakcPlan(planId, loanAmount, maycTokenId, bakcTokenId, "MAYC", rewardStakeToCyanVault);
+        createBakcPlan(planId, loanAmount, maycTokenId, bakcTokenId, "MAYC");
     }
 
     function createBakcPlan(
@@ -317,8 +290,7 @@ contract CyanApeCoinPlan is AccessControlUpgradeable, ReentrancyGuardUpgradeable
         uint224 loanAmount,
         uint32 mainTokenId,
         uint32 bakcTokenId,
-        bytes32 mainCollectionName,
-        bool rewardStakeToCyanVault
+        bytes32 mainCollectionName
     ) private {
         if (paymentPlan[planId].cyanWalletAddress != address(0)) revert PlanAlreadyExists();
 
@@ -353,53 +325,7 @@ contract CyanApeCoinPlan is AccessControlUpgradeable, ReentrancyGuardUpgradeable
             bakcTokenId,
             loanAmount,
             cyanWalletAddress,
-            rewardStakeToCyanVault
-                ? ICyanApeCoinPlan.PaymentPlanStatus.ACTIVE_ACCRUE_CYANVAULT
-                : ICyanApeCoinPlan.PaymentPlanStatus.ACTIVE_ACCRUE_APESTAKING
-        );
-        paymentPlan[planId] = plan;
-        emit CreatedPlan(planId);
-    }
-
-    /**
-     * @notice Creating Ape coin staking plan to ApeCoin pool
-     * @param planId Plan ID
-     * @param stakeAmount Stake ApeCoin amount
-     * @param rewardStakeToCyanVault If enabled stake rewards to CyanVault, otherwise to ApeCoin pool
-     * @param signedBlockNum Signed block number
-     * @param signature Signature from Cyan
-     */
-    function createApeCoinPlan(
-        uint256 planId,
-        uint256 stakeAmount,
-        bool rewardStakeToCyanVault,
-        uint256 signedBlockNum,
-        bytes calldata signature
-    ) external nonReentrant {
-        if (paymentPlan[planId].cyanWalletAddress != address(0)) revert PlanAlreadyExists();
-
-        verifyApeCoinPlanSignature(
-            planId,
-            signedBlockNum,
-            stakeAmount,
-            APECOIN_POOL_ID,
-            rewardStakeToCyanVault,
-            signature
-        );
-        (, address cyanWalletAddress) = getUserAddresses(msg.sender);
-
-        // Stake ape coin and lock the NFT
-        IWalletApeCoin wallet = IWalletApeCoin(cyanWalletAddress);
-        wallet.executeModule(abi.encodeWithSelector(IWalletApeCoin.depositApeCoinAndLock.selector, stakeAmount));
-
-        ICyanApeCoinPlan.PaymentPlan memory plan = ICyanApeCoinPlan.PaymentPlan(
-            APECOIN_POOL_ID,
-            0,
-            0,
-            cyanWalletAddress,
-            rewardStakeToCyanVault
-                ? ICyanApeCoinPlan.PaymentPlanStatus.ACTIVE_ACCRUE_CYANVAULT
-                : ICyanApeCoinPlan.PaymentPlanStatus.ACTIVE_ACCRUE_APESTAKING
+            ICyanApeCoinPlan.PaymentPlanStatus.ACTIVE_ACCRUE_CYANVAULT
         );
         paymentPlan[planId] = plan;
         emit CreatedPlan(planId);
@@ -414,8 +340,8 @@ contract CyanApeCoinPlan is AccessControlUpgradeable, ReentrancyGuardUpgradeable
 
         require(plan.cyanWalletAddress != address(0), "CyanApeCoinPlan: plan does not exist");
         require(
-            plan.status == ICyanApeCoinPlan.PaymentPlanStatus.ACTIVE_ACCRUE_APESTAKING ||
-                plan.status == ICyanApeCoinPlan.PaymentPlanStatus.ACTIVE_ACCRUE_CYANVAULT,
+            plan.status == ICyanApeCoinPlan.PaymentPlanStatus.ACTIVE_ACCRUE_CYANVAULT ||
+                plan.status == ICyanApeCoinPlan.PaymentPlanStatus.ACTIVE_ACCRUE_APESTAKING,
             "CyanApeCoinPlan: plan is not active"
         );
         require(plan.poolId != APECOIN_POOL_ID, "CyanApeCoinPlan: plan is ApeCoin plan");
@@ -451,47 +377,8 @@ contract CyanApeCoinPlan is AccessControlUpgradeable, ReentrancyGuardUpgradeable
 
         uint256 depositAmount = stakedAmount + rewards - plan.loanedAmount;
         if (depositAmount > 0) {
-            if (plan.status == ICyanApeCoinPlan.PaymentPlanStatus.ACTIVE_ACCRUE_CYANVAULT) {
-                cyanApeCoinVault.deposit(ICyanApeCoinVault.DepositInfo(plan.cyanWalletAddress, depositAmount));
-            } else {
-                IApeCoinStaking apeStaking = getApeStaking();
-                apeStaking.depositApeCoin(depositAmount, plan.cyanWalletAddress);
-            }
+            cyanApeCoinVault.deposit(ICyanApeCoinVault.DepositInfo(plan.cyanWalletAddress, depositAmount));
         }
-
-        emit Completed(planId);
-    }
-
-    /**
-     * @notice Complete ApeCoin staking plan
-     * @param planId Payment Plan ID
-     */
-    function completeApeCoinPlan(uint256 planId) external nonReentrant {
-        ICyanApeCoinPlan.PaymentPlan memory plan = paymentPlan[planId];
-
-        require(plan.cyanWalletAddress != address(0), "CyanApeCoinPlan: plan does not exist");
-        require(
-            plan.status == ICyanApeCoinPlan.PaymentPlanStatus.ACTIVE_ACCRUE_APESTAKING ||
-                plan.status == ICyanApeCoinPlan.PaymentPlanStatus.ACTIVE_ACCRUE_CYANVAULT,
-            "CyanApeCoinPlan: plan is not active"
-        );
-        require(plan.poolId == APECOIN_POOL_ID, "CyanApeCoinPlan: plan is not ApeCoin plan");
-
-        if (msg.sender != paymentPlan[planId].cyanWalletAddress) {
-            address mainWalletAddress = getMainWalletAddress(paymentPlan[planId].cyanWalletAddress);
-            require(msg.sender == mainWalletAddress, "CyanApeCoinPlan: Must be plan owner to complete");
-        }
-
-        (uint256 deposited, , uint256 serviceFee) = calculateApeCoinPoolNumbers(paymentPlan[planId].cyanWalletAddress);
-
-        IWalletApeCoin wallet = IWalletApeCoin(plan.cyanWalletAddress);
-        wallet.executeModule(
-            abi.encodeWithSelector(IWalletApeCoin.withdrawApeCoinAndUnlock.selector, deposited, serviceFee)
-        );
-
-        claimableServiceFee += serviceFee;
-
-        paymentPlan[planId].status = ICyanApeCoinPlan.PaymentPlanStatus.COMPLETED;
 
         emit Completed(planId);
     }
@@ -502,48 +389,31 @@ contract CyanApeCoinPlan is AccessControlUpgradeable, ReentrancyGuardUpgradeable
         uint256[4] memory poolInterestRates = cyanApeCoinVault.getPoolInterestRates();
 
         ICyanApeCoinVault.DepositInfo[] memory deposits = new ICyanApeCoinVault.DepositInfo[](planIds.length);
-        IApeCoinStaking apeStaking = getApeStaking();
 
         for (uint256 ind; ind < planIds.length; ) {
             ICyanApeCoinPlan.PaymentPlan memory plan = paymentPlan[planIds[ind]];
 
             require(plan.cyanWalletAddress != address(0), "CyanApeCoinPlan: plan does not exist");
             require(
-                plan.status == ICyanApeCoinPlan.PaymentPlanStatus.ACTIVE_ACCRUE_APESTAKING ||
-                    plan.status == ICyanApeCoinPlan.PaymentPlanStatus.ACTIVE_ACCRUE_CYANVAULT,
+                plan.status == ICyanApeCoinPlan.PaymentPlanStatus.ACTIVE_ACCRUE_CYANVAULT ||
+                    plan.status == ICyanApeCoinPlan.PaymentPlanStatus.ACTIVE_ACCRUE_APESTAKING,
                 "CyanApeCoinPlan: plan is not active"
             );
             IWalletApeCoin wallet = IWalletApeCoin(plan.cyanWalletAddress);
-            uint256 rewards;
-            if (plan.poolId == APECOIN_POOL_ID) {
-                (, uint256 unclaimed, uint256 serviceFee) = calculateApeCoinPoolNumbers(plan.cyanWalletAddress);
-                rewards = unclaimed - serviceFee;
-                require(rewards > 0, "CyanApeCoinPlan: not enough rewards");
+            (uint256 rewards, uint256 interestFee, uint256 serviceFee, ) = calculateNumbers(
+                plan,
+                poolInterestRates[plan.poolId]
+            );
+            require(rewards > 0, "CyanApeCoinPlan: not enough rewards");
 
-                wallet.executeModule(abi.encodeWithSelector(IWalletApeCoin.autoCompoundApeCoinPool.selector));
+            wallet.executeModule(
+                abi.encodeWithSelector(IWalletApeCoin.autoCompound.selector, plan.poolId, plan.tokenId)
+            );
 
-                totalServiceFee += serviceFee;
-            } else {
-                (uint256 _rewards, uint256 interestFee, uint256 serviceFee, ) = calculateNumbers(
-                    plan,
-                    poolInterestRates[plan.poolId]
-                );
-                rewards = _rewards;
-                require(rewards > 0, "CyanApeCoinPlan: not enough rewards");
+            totalServiceFee += serviceFee;
+            totalInterestFee += interestFee;
 
-                wallet.executeModule(
-                    abi.encodeWithSelector(IWalletApeCoin.autoCompound.selector, plan.poolId, plan.tokenId)
-                );
-
-                totalServiceFee += serviceFee;
-                totalInterestFee += interestFee;
-            }
-            if (plan.status == ICyanApeCoinPlan.PaymentPlanStatus.ACTIVE_ACCRUE_CYANVAULT) {
-                deposits[ind] = ICyanApeCoinVault.DepositInfo(plan.cyanWalletAddress, rewards);
-            } else {
-                deposits[ind] = ICyanApeCoinVault.DepositInfo(plan.cyanWalletAddress, 0);
-                apeStaking.depositApeCoin(rewards, plan.cyanWalletAddress);
-            }
+            deposits[ind] = ICyanApeCoinVault.DepositInfo(plan.cyanWalletAddress, rewards);
             unchecked {
                 ++ind;
             }
@@ -563,15 +433,12 @@ contract CyanApeCoinPlan is AccessControlUpgradeable, ReentrancyGuardUpgradeable
         uint224 amount,
         uint32 tokenId,
         uint256 poolId,
-        bool rewardStakeToCyanVault,
         bytes calldata signature
     ) private view {
         if (signedBlockNum > block.number) revert InvalidBlockNumber();
         if (signedBlockNum + 50 < block.number) revert InvalidSignature();
 
-        bytes32 msgHash = keccak256(
-            abi.encodePacked(planId, tokenId, signedBlockNum, amount, poolId, block.chainid, rewardStakeToCyanVault)
-        );
+        bytes32 msgHash = keccak256(abi.encodePacked(planId, tokenId, signedBlockNum, amount, poolId, block.chainid));
         bytes32 signedHash = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", msgHash));
         if (signedHash.recover(signature) != cyanSigner) revert InvalidSignature();
     }
@@ -584,7 +451,6 @@ contract CyanApeCoinPlan is AccessControlUpgradeable, ReentrancyGuardUpgradeable
         uint256 poolId,
         uint256 mainPoolId,
         uint256 signedBlockNum,
-        bool rewardStakeToCyanVault,
         bytes calldata signature
     ) private view {
         if (signedBlockNum > block.number) revert InvalidBlockNumber();
@@ -599,27 +465,8 @@ contract CyanApeCoinPlan is AccessControlUpgradeable, ReentrancyGuardUpgradeable
                 poolId,
                 mainPoolId,
                 signedBlockNum,
-                block.chainid,
-                rewardStakeToCyanVault
+                block.chainid
             )
-        );
-        bytes32 signedHash = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", msgHash));
-        if (signedHash.recover(signature) != cyanSigner) revert InvalidSignature();
-    }
-
-    function verifyApeCoinPlanSignature(
-        uint256 planId,
-        uint256 signedBlockNum,
-        uint256 amount,
-        uint256 poolId,
-        bool rewardStakeToCyanVault,
-        bytes calldata signature
-    ) private view {
-        if (signedBlockNum > block.number) revert InvalidBlockNumber();
-        if (signedBlockNum + 50 < block.number) revert InvalidSignature();
-
-        bytes32 msgHash = keccak256(
-            abi.encodePacked(planId, signedBlockNum, amount, poolId, block.chainid, rewardStakeToCyanVault)
         );
         bytes32 signedHash = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", msgHash));
         if (signedHash.recover(signature) != cyanSigner) revert InvalidSignature();
