@@ -42,51 +42,15 @@
 
 - **PaymentPlanV2Logic** : [0x770704F696FC192eA037d54F83b8657a3DD0BDE7](https://etherscan.io/address/0x770704F696FC192eA037d54F83b8657a3DD0BDE7)
 
-### Apestaking Plan
-
-- **ApeCoinPlan** : [0x0d68083147e52207892C818b0be5788b2cCc5FdF](https://etherscan.io/address/0x0d68083147e52207892C818b0be5788b2cCc5FdF)
-
 ### Private Sales
 
 - **CyanPrivateSales** : [0x2B98c994213cEed5745EF18a775D69398a08da23](https://etherscan.io/address/0x2B98c994213cEed5745EF18a775D69398a08da23)
 
 ### Vaults
 
-#### ETH Vaults
+- **ETH Vault** : [0x460e0Cd087033A73E1bC5c071711f1f27884968A](https://etherscan.io/address/0x460e0Cd087033A73E1bC5c071711f1f27884968A)
 
-- **Cyan Vault (ETH)** : [0x460e0Cd087033A73E1bC5c071711f1f27884968A](https://etherscan.io/address/0x460e0Cd087033A73E1bC5c071711f1f27884968A)
-
-- **Cyan Degen Vault (ETH)** : [0x7a6546d57f4590b3cAF29e771204b7C6c7CbdBC7](https://etherscan.io/address/0x7a6546d57f4590b3cAF29e771204b7C6c7CbdBC7)
-
-- **Cyan AL Vault (ETH)** : [0x4e6ed0241e863970c8333ae0da6c60d23b1ff0af](https://etherscan.io/address/0x4e6ed0241e863970c8333ae0da6c60d23b1ff0af)
-
-- **Degen AL Vault (ETH)** : [0x3229a12f452a9FA393E4804Fa2366A0E4be35Bc6](https://etherscan.io/address/0x3229a12f452a9FA393E4804Fa2366A0E4be35Bc6)
-
-- **Cyan Art Vault (ETH)** : [0xFdBFA4a4365db1f99Fe98A098aA899f3d904f217](https://etherscan.io/address/0xFdBFA4a4365db1f99Fe98A098aA899f3d904f217)
-
-- **Tribul Vault (ETH)** : [0x328D27B7c7022DE81Ad1Df3b752C5D3d461989DF](https://etherscan.io/address/0x328D27B7c7022DE81Ad1Df3b752C5D3d461989DF)
-
-#### USDC Vaults
-
-- **Cyan Vault (USDC)** : [0x99Fa02B3a88758E0A748406847a4A1Cae2841F3B](https://etherscan.io/address/0x99Fa02B3a88758E0A748406847a4A1Cae2841F3B)
-
-- **Cyan Degen Vault (USDC)** : [0x8553B448A6E4A554c3BCf3A92e9266B48AcEB494](https://etherscan.io/address/0x8553B448A6E4A554c3BCf3A92e9266B48AcEB494)
-
-- **Cyan AL Vault (USDC)** : [0xf0b03f2dfa90aa35c8a0df8d28f946bb8105d234](https://etherscan.io/address/0xf0b03f2dfa90aa35c8a0df8d28f946bb8105d234)
-
-- **Degen AL Vault (USDC)** : [0xfce56EEA4cf64e2E79aec929c8d5E2a2A7466924](https://etherscan.io/address/0xfce56EEA4cf64e2E79aec929c8d5E2a2A7466924)
-
-- **Cyan Art Vault (USDC)** : [0xC8E34f0421416Ba9adf2bCbc84De86F6D27bA84D](https://etherscan.io/address/0xC8E34f0421416Ba9adf2bCbc84De86F6D27bA84D)
-
-- **CryptoPunks Vault (USDC)** : [0x1C413Ec34c2eD286a53868923424CF81bdB7FAf0](https://etherscan.io/address/0x1C413Ec34c2eD286a53868923424CF81bdB7FAf0)
-
-- **Tribul Vault (USDC)** : [0xC5667f737cB13EE6d60bd2A0b23B607b15D87242](https://etherscan.io/address/0xC5667f737cB13EE6d60bd2A0b23B607b15D87242)
-
-- **Unikura RWA Vault (USDC)** : [0xf30b58716b7d36dadaee46b1bd3bb33cdc084110](https://etherscan.io/address/0xf30b58716b7d36dadaee46b1bd3bb33cdc084110)
-
-#### ApeCoin Vaults
-
-- **ApeCoin Vault (APE)** : [0x40138D542F23503429EA7AB9630545D628912446](https://etherscan.io/address/0x40138D542F23503429EA7AB9630545D628912446)
+- **USDC Vault** : [0x99Fa02B3a88758E0A748406847a4A1Cae2841F3B](https://etherscan.io/address/0x99Fa02B3a88758E0A748406847a4A1Cae2841F3B)
 
 ### Utility contracts
 
